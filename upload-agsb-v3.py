@@ -3,9 +3,9 @@ import os, sys, json, base64, platform, subprocess, ssl, time, tarfile
 from pathlib import Path
 import urllib.request
 
-# --- 环境自适应配置 ---
-# 强制使用 /tmp 确保在 Streamlit Cloud 有写入和执行权限
-DIR = Path("/tmp/.agsb_final")
+# --- 环境适配 ---
+# Streamlit 环境下 /tmp 是唯一可靠的可执行写入路径
+BASE_DIR = Path("/tmp/.agsb_deploy").resolve()
 IP_URL = "https://raw.githubusercontent.com/MIGHTYBLANK001/OT/refs/heads/main/IP"
 
 # 默认参数
@@ -14,44 +14,51 @@ PORT = 49999
 TOKEN = "eyJhIjoiN2UxMzc3ODMyY2VmOTliZTIxYjI3MTQzMWU3NzA1ZWYiLCJ0IjoiMzYxNmQ5NzMtNmViMi00ZDViLWFhYWMtZjIwNjM4YzVjMzdkIiwicyI6IllXVXlNRGswWVRVdFpUZzRaQzAwTURkaExUa3pNMkl0WlRGbVptUXlOekl6WVRCaiJ9"
 DOMAIN = "pynode.lun.xx.kg"
 
-def download_and_extract():
-    if not DIR.exists(): DIR.mkdir(parents=True, exist_ok=True)
-    os.chdir(DIR)
-    ctx = ssl._create_unverified_context()
+def download_bins():
+    if not BASE_DIR.exists(): BASE_DIR.mkdir(parents=True, exist_ok=True)
+    os.chdir(BASE_DIR)
     arch = "amd64" if "x86_64" in platform.machine() else "arm64"
     
-    # 1. 下载并解压 Sing-box (原生 Python 处理)
-    sb_url = f"https://github.com/SagerNet/sing-box/releases/download/v1.8.5/sing-box-1.8.5-linux-{arch}.tar.gz"
-    print(f"[*] 正在下载 Sing-box...")
-    sb_tar = "sb.tar.gz"
-    urllib.request.urlretrieve(sb_url, sb_tar)
-    with tarfile.open(sb_tar) as tar:
-        tar.extractall()
-        # 寻找解压后的 sing-box 二进制文件位置并移动到当前目录
-        for p in Path(".").rglob("sing-box"):
-            if p.is_file():
-                os.rename(p, "sing-box")
-                break
-    os.chmod("sing-box", 0o755)
+    # 下载 sing-box
+    sb_bin = BASE_DIR / "sing-box"
+    if not sb_bin.exists():
+        print("[*] 正在下载并解压 Sing-box...")
+        sb_url = f"https://github.com/SagerNet/sing-box/releases/download/v1.8.5/sing-box-1.8.5-linux-{arch}.tar.gz"
+        tmp_tar = BASE_DIR / "sb.tar.gz"
+        urllib.request.urlretrieve(sb_url, tmp_tar)
+        with tarfile.open(tmp_tar) as tar:
+            # 自动寻找 tar 包深层目录里的二进制文件并提取
+            for member in tar.getmembers():
+                if member.name.endswith("sing-box"):
+                    member.name = os.path.basename(member.name)
+                    tar.extract(member, path=BASE_DIR)
+        sb_bin.chmod(0o755)
 
-    # 2. 下载 Cloudflared
-    print(f"[*] 正在下载 Cloudflared...")
-    cf_url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{arch}"
-    urllib.request.urlretrieve(cf_url, "cloudflared")
-    os.chmod("cloudflared", 0o755)
+    # 下载 cloudflared
+    cf_bin = BASE_DIR / "cloudflared"
+    if not cf_bin.exists():
+        print("[*] 正在下载 Cloudflared...")
+        cf_url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{arch}"
+        urllib.request.urlretrieve(cf_url, cf_bin)
+        cf_bin.chmod(0o755)
+    
+    return sb_bin, cf_bin
 
-def create_config():
-    # 自动生成 WARP 密钥
+def generate_config(sb_bin):
+    # 利用 sing-box 自身生成 WARP 密钥
     try:
-        res = subprocess.check_output(["./sing-box", "generate", "wg-keypair"]).decode().split()
-        priv_key = res[2]
+        out = subprocess.check_output([str(sb_bin), "generate", "wg-keypair"]).decode().split()
+        priv_key = out[2]
     except:
-        priv_key = "GE6Ek7S..." # 兜底
+        priv_key = "GE6Ek7S...="
 
-    ws_path = f"/{UID[:8]}-vm"
-    cfg = {
+    config = {
         "log": {"level": "error"},
-        "inbounds": [{"type": "vmess", "listen": "127.0.0.1", "listen_port": PORT, "users": [{"uuid": UID}], "transport": {"type": "ws", "path": ws_path}}],
+        "inbounds": [{
+            "type": "vmess", "listen": "127.0.0.1", "listen_port": PORT,
+            "users": [{"uuid": UID}],
+            "transport": {"type": "ws", "path": f"/{UID[:8]}-vm"}
+        }],
         "outbounds": [
             {"type": "direct", "tag": "direct"},
             {
@@ -63,32 +70,27 @@ def create_config():
         ],
         "route": {
             "rules": [
-                {
-                    "domain_suffix": [
-                        "openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com",
-                        "anthropic.com", "claude.ai", "gemini.google.com", "bing.com"
-                    ],
-                    "outbound": "warp"
-                },
-                {"geosite": ["netflix", "disney", "google"], "outbound": "warp"}
+                # AI 相关域名强制走 WARP
+                {"domain_suffix": ["openai.com", "chatgpt.com", "anthropic.com", "claude.ai", "gemini.google.com"], "outbound": "warp"},
+                {"geosite": ["netflix", "disney"], "outbound": "warp"}
             ],
             "final": "direct"
         }
     }
-    with open("sb.json", "w") as f: json.dump(cfg, f, indent=2)
+    with open(BASE_DIR / "sb.json", "w") as f:
+        json.dump(config, f, indent=2)
 
-def run_services():
-    print("[*] 启动双隧道服务...")
-    os.system("pkill -9 sing-box cloudflared >/dev/null 2>&1")
-    
-    # 显式使用绝对路径启动，防止 FileNotFoundError
-    sb_bin = str(DIR / "sing-box")
-    cf_bin = str(DIR / "cloudflared")
-    
-    subprocess.Popen([sb_bin, "run", "-c", "sb.json"], cwd=DIR, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.Popen([cf_bin, "tunnel", "--no-autoupdate", "run", "--token", TOKEN], cwd=DIR, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def start_services(sb_bin, cf_bin):
+    # 检查进程是否已在运行
+    try:
+        subprocess.check_output(["pkill", "-0", "-f", "sing-box"])
+        print("[!] 服务已在运行中，跳过启动。")
+    except:
+        print("[*] 启动双隧道服务...")
+        subprocess.Popen([str(sb_bin), "run", "-c", str(BASE_DIR / "sb.json")], cwd=BASE_DIR)
+        subprocess.Popen([str(cf_bin), "tunnel", "--no-autoupdate", "run", "--token", TOKEN], cwd=BASE_DIR)
 
-    # 获取优选IP并输出节点
+def export_nodes():
     try:
         ctx = ssl._create_unverified_context()
         ips = urllib.request.urlopen(IP_URL, context=ctx).read().decode().splitlines()
@@ -97,14 +99,20 @@ def run_services():
             v = {"v":"2","ps":f"AI-WARP-{ip}","add":ip,"port":"443","id":UID,"net":"ws","host":DOMAIN,"path":f"/{UID[:8]}-vm?ed=2048","tls":"tls","sni":DOMAIN}
             nodes.append("vmess://" + base64.b64encode(json.dumps(v).encode()).decode())
         
-        print(f"\n✅ 部署完成！\n🚀 AI 服务（ChatGPT/Claude）已强制走 WARP 出站。")
-        print(f"🔗 首选节点:\n{nodes[0] if nodes else '获取失败'}")
+        print("\n" + "="*50)
+        print("✅ 部署成功！AI 服务已分流至 WARP。")
+        print(f"🔗 首选节点链接:\n{nodes[0] if nodes else '获取失败'}")
+        print("="*50)
     except:
-        print("[-] 节点生成异常")
+        print("[-] 无法从远程拉取优选IP。")
 
 if __name__ == "__main__":
-    download_and_extract()
-    create_config()
-    run_services()
-    # 保持主线程运行，防止容器关闭
-    while True: time.sleep(60)
+    # 解决 Streamlit 多次执行导致的路径问题
+    sb_path, cf_path = download_bins()
+    generate_config(sb_path)
+    start_services(sb_path, cf_path)
+    export_nodes()
+    
+    # 保持主线程存活
+    while True:
+        time.sleep(60)
