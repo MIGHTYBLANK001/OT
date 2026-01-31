@@ -4,7 +4,7 @@ import urllib.request
 import streamlit as st
 
 BASE_DIR = Path("/tmp/.agsb_final").resolve()
-UID = st.secrets.get("UUID", "")
+UID = st.secrets.get("UUID", "ee1f6ad8-dca8-47d9-8d17-1a2983551702")
 TOKEN = st.secrets.get("TOKEN", "")
 DOMAIN = st.secrets.get("DOMAIN", "")
 PORT = 49999
@@ -72,26 +72,25 @@ def start_node():
     subprocess.Popen([str(sb), "run", "-c", "sb.json"], start_new_session=True)
     subprocess.Popen([str(cf), "tunnel", "--no-autoupdate", "run", "--token", TOKEN], start_new_session=True)
     
+    # 将节点信息输出到控制台日志
+    vmess = {"v":"2", "ps":"Stable-Node", "add":DOMAIN, "port":"443", "id":UID, "net":"ws", "host":DOMAIN, "path":WS_PATH, "tls":"tls", "sni":DOMAIN}
+    link = "vmess://" + base64.b64encode(json.dumps(vmess).encode()).decode()
+    print(f"\n[NODE_LINK] {link}\n", flush=True)
+
     threading.Thread(target=keep_alive, daemon=True).start()
     return True
 
 def main():
-    st.set_page_config(page_title="Node Active", page_icon="🟢")
-    st.markdown("""<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;} .stCodeBlock {background-color: #f0f2f6;}</style>""", unsafe_allow_html=True)
-    st.title("🟢 System Online")
+    st.set_page_config(page_title="System", page_icon="🟢")
+    st.markdown("""<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;}</style>""", unsafe_allow_html=True)
+    st.title("🟢 Service Online")
     
     if not TOKEN or not DOMAIN:
         st.error("Missing Secrets!")
         return
 
     start_node()
-    
-    vmess = {"v":"2", "ps":"Stable-Node", "add":DOMAIN, "port":"443", "id":UID, "net":"ws", "host":DOMAIN, "path":WS_PATH, "tls":"tls", "sni":DOMAIN}
-    link = "vmess://" + base64.b64encode(json.dumps(vmess).encode()).decode()
-
-    st.success("Services are running. Keep-alive active.")
-    with st.expander("Show Connection Config"):
-        st.code(link, language="text")
+    st.success("Services are running. Connection info sent to console logs.")
 
 if __name__ == "__main__":
     main()
