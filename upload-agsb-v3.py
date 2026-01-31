@@ -3,11 +3,11 @@ from pathlib import Path
 import urllib.request
 import streamlit as st
 
-# --- 极简桥接版 ---
-BASE_DIR = Path("/tmp/.agsb_zt_final").resolve()
-UID = st.secrets.get("UUID", "")
+# --- 极简配置 ---
+BASE_DIR = Path("/tmp/.agsb_final").resolve()
+UID = st.secrets.get("UUID", "ee1f6ad8-dca8-47d9-8d17-1a2983551702")
 TOKEN = st.secrets.get("TOKEN", "")
-DOMAIN = st.secrets.get("DOMAIN", "")
+DOMAIN = st.secrets.get("DOMAIN", "streamlit-cf-warp-py.aieo.eu.cc")
 PORT = 49999
 
 def setup():
@@ -32,39 +32,40 @@ def setup():
     return sb_bin, cf_bin
 
 def run():
+    st.title("Service Gateway")
     sb, cf = setup()
-    
-    # 纯净 VMess 转发配置
+
+    # 1. 彻底杀掉旧进程 (不使用 lsof)
+    os.system("pkill -9 sing-box >/dev/null 2>&1")
+    os.system("pkill -9 cloudflared >/dev/null 2>&1")
+    time.sleep(2)
+
+    # 2. 生成 Sing-box 配置
     cfg = {
         "log": {"level": "error"},
         "inbounds": [{
-            "type": "vmess",
-            "listen": "127.0.0.1",
-            "listen_port": PORT,
-            "users": [{"uuid": UID}],
-            "sniff": True,
+            "type": "vmess", "listen": "127.0.0.1", "listen_port": PORT,
+            "users": [{"uuid": UID}], "sniff": True,
             "transport": {"type": "ws", "path": f"/{UID[:8]}-vm"}
         }],
         "outbounds": [{"type": "direct"}]
     }
-
     with open("sb.json", "w") as f: json.dump(cfg, f)
 
-    # 清理并启动
-    os.system(f"kill -9 $(lsof -t -i:{PORT}) >/dev/null 2>&1")
-    os.system("pkill -9 sing-box cloudflared >/dev/null 2>&1")
-    time.sleep(1)
+    # 3. 启动服务
+    subprocess.Popen([str(sb), "run", "-c", "sb.json"])
+    subprocess.Popen([str(cf), "tunnel", "--no-autoupdate", "run", "--token", TOKEN])
 
-    subprocess.Popen([str(sb), "run", "-c", "sb.json"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.Popen([str(cf), "tunnel", "--no-autoupdate", "run", "--token", TOKEN], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    link = "vmess://" + base64.b64encode(json.dumps({
-        "v":"2","ps":"Cloudflare-ZeroTrust","add":DOMAIN,"port":"443","id":UID,"net":"ws","host":DOMAIN,"path":f"/{UID[:8]}-vm","tls":"tls","sni":DOMAIN
-    }).encode()).decode()
+    # 4. 界面显示
+    vmess_cfg = {"v":"2", "ps":"ZT-WARP-Node", "add":DOMAIN, "port":"443", "id":UID, "net":"ws", "host":DOMAIN, "path":f"/{UID[:8]}-vm", "tls":"tls", "sni":DOMAIN}
+    link = "vmess://" + base64.b64encode(json.dumps(vmess_cfg).encode()).decode()
     
-    st.success("✅ 服务已运行！")
+    st.success("✅ 隧道已重新握手，请检查 Zero Trust 状态。")
     st.code(link)
-    while True: time.sleep(600)
+    
+    # 5. 保持运行 (非阻塞方式)
+    st.info("节点在线中...")
+    # 不要使用 while True，Streamlit 运行完代码后会自动保持环境
 
 if __name__ == "__main__":
     run()
