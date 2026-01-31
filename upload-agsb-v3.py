@@ -4,11 +4,11 @@ from pathlib import Path
 import urllib.request
 import streamlit as st
 
-# --- 环境适配 ---
-BASE_DIR = Path("/tmp/.agsb_final_fix").resolve()
-UID = st.secrets.get("UUID", "")
+# --- 环境配置 ---
+BASE_DIR = Path("/tmp/.agsb_base_test").resolve()
+UID = st.secrets.get("UUID", "ee1f6ad8-dca8-47d9-8d17-1a2983551702")
 TOKEN = st.secrets.get("TOKEN", "")
-DOMAIN = st.secrets.get("DOMAIN", "")
+DOMAIN = st.secrets.get("DOMAIN", "pynode.lun.xx.kg")
 PORT = 49999
 
 def log(msg):
@@ -23,7 +23,7 @@ def setup():
     cf_bin = BASE_DIR / "cloudflared"
 
     if not sb_bin.exists():
-        log("下载 sing-box 内核...")
+        log("正在获取 Sing-box 内核...")
         url = f"https://github.com/SagerNet/sing-box/releases/download/v1.8.5/sing-box-1.8.5-linux-{arch}.tar.gz"
         urllib.request.urlretrieve(url, "sb.tar.gz")
         with tarfile.open("sb.tar.gz") as tar:
@@ -33,7 +33,7 @@ def setup():
         sb_bin.chmod(0o755)
 
     if not cf_bin.exists():
-        log("下载 cloudflared...")
+        log("正在获取 Cloudflared...")
         url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{arch}"
         urllib.request.urlretrieve(url, cf_bin)
         cf_bin.chmod(0o755)
@@ -42,65 +42,46 @@ def setup():
 def run():
     sb, cf = setup()
     
-    # 生成本地 WARP 密钥
-    try:
-        out = subprocess.check_output([str(sb), "generate", "wg-keypair"]).decode().split()
-        priv_key = out[2]
-    except: priv_key = "GE6Ek7S...="
-
-    # --- 修正后的路由逻辑 ---
+    # --- 极致简化的基础配置：无 WARP，全直连 ---
     cfg = {
         "log": {"level": "error"},
         "inbounds": [{
             "type": "vmess", 
-            "listen": "0.0.0.0",  # 改为监听所有网卡
+            "listen": "0.0.0.0", 
             "listen_port": PORT,
             "users": [{"uuid": UID}],
             "transport": {"type": "ws", "path": f"/{UID[:8]}-vm"}
         }],
         "outbounds": [
-            {
-                "type": "wireguard", 
-                "tag": "warp", 
-                "server": "engage.cloudflareclient.com", 
-                "server_port": 2408, 
-                "local_address": ["172.16.0.2/32", "2606:4700:110:8285:343b:d165:10a4:6443/128"], 
-                "private_key": priv_key, 
-                "mtu": 1280,
-                "udp_fragment": True
-            },
             {"type": "direct", "tag": "direct"}
         ],
         "route": {
-            "rules": [
-                # 1. 核心修复：排除 Cloudflare 相关所有域名和 IP，防止隧道断开
-                {"domain_suffix": ["cloudflare.com", "cloudflareclient.com", "argotunnel.com"], "outbound": "direct"},
-                # 2. 排除私有地址（局域网）
-                {"ip_is_private": True, "outbound": "direct"},
-                # 3. DNS 强制直连
-                {"protocol": "dns", "outbound": "direct"}
-            ],
-            "final": "warp" 
+            "final": "direct"
         }
     }
     with open("sb.json", "w") as f: json.dump(cfg, f)
 
     # 构造节点链接
-    vm = {"v":"2","ps":"WARP-Global-Fixed","add":DOMAIN,"port":"443","id":UID,"net":"ws","host":DOMAIN,"path":f"/{UID[:8]}-vm","tls":"tls","sni":DOMAIN}
+    vm = {
+        "v": "2", "ps": "BASE-TEST-NODE", "add": DOMAIN, "port": "443", "id": UID,
+        "net": "ws", "host": DOMAIN, "path": f"/{UID[:8]}-vm", "tls": "tls", "sni": DOMAIN
+    }
     link = "vmess://" + base64.b64encode(json.dumps(vm).encode()).decode()
     
-    print("\n" + "✅" * 15, flush=True)
-    print("【 部署完成：已修正全局 WARP 排除规则 】", flush=True)
-    print(f"节点链接: {link}", flush=True)
-    print("✅" * 15 + "\n", flush=True)
+    print("\n" + "⚠️" * 15, flush=True)
+    print("【 基础模式启动：已移除 WARP 功能 】", flush=True)
+    print(f"测试节点: {link}", flush=True)
+    print("⚠️" * 15 + "\n", flush=True)
 
     # 启动进程
     os.system("pkill -9 sing-box cloudflared >/dev/null 2>&1")
-    # 增加启动参数 --url，在没有 TOKEN 时可用作调试，但这里我们使用你的 TOKEN
+    
+    # 启动 sing-box
     subprocess.Popen([str(sb), "run", "-c", "sb.json"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # 启动 cloudflared
     subprocess.Popen([str(cf), "tunnel", "--no-autoupdate", "run", "--token", TOKEN], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    log("所有流量现已强制通过 WARP 出口。")
+    log("服务已就绪。如果此节点依然 -1，请检查 Cloudflare Tunnel 的域名解析是否指向了正确的隧道。")
     while True: time.sleep(60)
 
 if __name__ == "__main__":
