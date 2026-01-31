@@ -3,21 +3,18 @@ from pathlib import Path
 import urllib.request
 import streamlit as st
 
-# --- 核心配置 ---
 BASE_DIR = Path("/tmp/.agsb_final").resolve()
-UID = st.secrets.get("UUID", "ee1f6ad8-dca8-47d9-8d17-1a2983551702")
+UID = st.secrets.get("UUID", "")
 TOKEN = st.secrets.get("TOKEN", "")
 DOMAIN = st.secrets.get("DOMAIN", "")
 PORT = 49999
 WS_PATH = f"/{UID[:8]}-vm"
 
 def keep_alive():
-    """保活逻辑：访问正确的 WS 路径以消除 bad path 报错"""
     if not DOMAIN: return
-    time.sleep(30) # 等待启动
+    time.sleep(30)
     while True:
         try:
-            # 加上路径，模拟真实的 WS 握手请求
             url = f"https://{DOMAIN}{WS_PATH}"
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -26,11 +23,11 @@ def keep_alive():
             }
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=10) as response:
-                print(f"[*] Keep-alive heartbeat sent to {WS_PATH}", flush=True)
-        except Exception as e:
-            # 即使报错 400 也是成功的，因为流量已到达后端
-            print(f"[*] Heartbeat ping delivered", flush=True)
-        time.sleep(1200) 
+                pass
+            print(f"[*] Heartbeat delivered", flush=True)
+        except:
+            print(f"[*] Heartbeat pulse", flush=True)
+        time.sleep(1200)
 
 def setup():
     if not BASE_DIR.exists(): BASE_DIR.mkdir(parents=True)
@@ -80,7 +77,8 @@ def start_node():
 
 def main():
     st.set_page_config(page_title="Node Active", page_icon="🟢")
-    st.title("🟢 System Status: Online")
+    st.markdown("""<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;} .stCodeBlock {background-color: #f0f2f6;}</style>""", unsafe_allow_html=True)
+    st.title("🟢 System Online")
     
     if not TOKEN or not DOMAIN:
         st.error("Missing Secrets!")
@@ -88,9 +86,12 @@ def main():
 
     start_node()
     
-    vmess = {"v":"2", "ps":"Streamlit-Direct", "add":DOMAIN, "port":"443", "id":UID, "net":"ws", "host":DOMAIN, "path":WS_PATH, "tls":"tls", "sni":DOMAIN}
-    st.success("Tunnel established. Keep-alive active (20m interval).")
-    st.code("vmess://" + base64.b64encode(json.dumps(vmess).encode()).decode())
+    vmess = {"v":"2", "ps":"Stable-Node", "add":DOMAIN, "port":"443", "id":UID, "net":"ws", "host":DOMAIN, "path":WS_PATH, "tls":"tls", "sni":DOMAIN}
+    link = "vmess://" + base64.b64encode(json.dumps(vmess).encode()).decode()
+
+    st.success("Services are running. Keep-alive active.")
+    with st.expander("Show Connection Config"):
+        st.code(link, language="text")
 
 if __name__ == "__main__":
     main()
