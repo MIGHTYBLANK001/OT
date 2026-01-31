@@ -3,7 +3,7 @@ from pathlib import Path
 import urllib.request
 import streamlit as st
 
-# --- 极简配置 ---
+# --- 配置区 ---
 BASE_DIR = Path("/tmp/.agsb_final").resolve()
 UID = st.secrets.get("UUID", "ee1f6ad8-dca8-47d9-8d17-1a2983551702")
 TOKEN = st.secrets.get("TOKEN", "")
@@ -32,15 +32,15 @@ def setup():
     return sb_bin, cf_bin
 
 def run():
-    st.title("Service Gateway")
+    st.title("Zero Trust Node")
     sb, cf = setup()
 
-    # 1. 彻底杀掉旧进程 (不使用 lsof)
+    # 彻底清理旧进程
     os.system("pkill -9 sing-box >/dev/null 2>&1")
     os.system("pkill -9 cloudflared >/dev/null 2>&1")
     time.sleep(2)
 
-    # 2. 生成 Sing-box 配置
+    # 核心配置：强制 IPv4 避免报错
     cfg = {
         "log": {"level": "error"},
         "inbounds": [{
@@ -48,24 +48,20 @@ def run():
             "users": [{"uuid": UID}], "sniff": True,
             "transport": {"type": "ws", "path": f"/{UID[:8]}-vm"}
         }],
-        "outbounds": [{"type": "direct"}]
+        "outbounds": [{
+            "type": "direct", 
+            "domain_strategy": "ipv4_only"  # 关键：强制 IPv4
+        }]
     }
     with open("sb.json", "w") as f: json.dump(cfg, f)
 
-    # 3. 启动服务
+    # 启动
     subprocess.Popen([str(sb), "run", "-c", "sb.json"])
     subprocess.Popen([str(cf), "tunnel", "--no-autoupdate", "run", "--token", TOKEN])
 
-    # 4. 界面显示
-    vmess_cfg = {"v":"2", "ps":"ZT-WARP-Node", "add":DOMAIN, "port":"443", "id":UID, "net":"ws", "host":DOMAIN, "path":f"/{UID[:8]}-vm", "tls":"tls", "sni":DOMAIN}
-    link = "vmess://" + base64.b64encode(json.dumps(vmess_cfg).encode()).decode()
-    
-    st.success("✅ 隧道已重新握手，请检查 Zero Trust 状态。")
-    st.code(link)
-    
-    # 5. 保持运行 (非阻塞方式)
-    st.info("节点在线中...")
-    # 不要使用 while True，Streamlit 运行完代码后会自动保持环境
+    vmess_cfg = {"v":"2", "ps":"ZT-WARP", "add":DOMAIN, "port":"443", "id":UID, "net":"ws", "host":DOMAIN, "path":f"/{UID[:8]}-vm", "tls":"tls", "sni":DOMAIN}
+    st.code("vmess://" + base64.b64encode(json.dumps(vmess_cfg).encode()).decode())
+    st.success("服务已启动。请确保 CF 后台 Egress Policy 已设为 Destination IP in 0.0.0.0/0")
 
 if __name__ == "__main__":
     run()
