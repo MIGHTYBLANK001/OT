@@ -3,29 +3,31 @@ from pathlib import Path
 import urllib.request
 import streamlit as st
 
-# --- 基础配置 ---
-BASE_DIR = Path("/tmp/.agsb_stable").resolve()
-UID = st.secrets.get("UUID", "")
+# --- 配置区 ---
+BASE_DIR = Path("/tmp/.agsb_final").resolve()
+UID = st.secrets.get("UUID", "ee1f6ad8-dca8-47d9-8d17-1a2983551702")
 TOKEN = st.secrets.get("TOKEN", "")
 DOMAIN = st.secrets.get("DOMAIN", "")
 PORT = 49999
 
 def keep_alive():
-    """保活逻辑：每 20 分钟访问一次自己的域名，防止休眠"""
-    if not DOMAIN:
-        return
+    """保活逻辑：模拟浏览器访问，防止 403 拦截"""
+    if not DOMAIN: return
+    # 延迟 1 分钟执行第一次保活，等待隧道完全建立
+    time.sleep(60)
     while True:
         try:
-            # 访问自己的 HTTPS 地址，触发 Cloudflare 流量
             url = f"https://{DOMAIN}"
-            urllib.request.urlopen(url, timeout=10)
-            print(f"[*] Keep-alive ping sent to {url}", flush=True)
+            # 模拟常用浏览器 User-Agent
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as response:
+                print(f"[*] Keep-alive success: {response.getcode()}", flush=True)
         except Exception as e:
             print(f"[!] Keep-alive failed: {e}", flush=True)
-        # 每 20 分钟执行一次 (1200秒)，确保在 30 分钟阈值内
-        time.sleep(1200)
+        time.sleep(1200) # 每 20 分钟访问一次
 
-def setup_binaries():
+def setup():
     if not BASE_DIR.exists(): BASE_DIR.mkdir(parents=True)
     os.chdir(BASE_DIR)
     arch = "amd64" if "x86_64" in platform.machine() else "arm64"
@@ -47,16 +49,15 @@ def setup_binaries():
         cf_bin.chmod(0o755)
     return sb_bin, cf_bin
 
-@st.cache_resource(show_spinner="启动核心服务中...")
-def start_services():
-    sb, cf = setup_binaries()
-
-    # 清理旧进程
+@st.cache_resource(show_spinner="Service starting...")
+def start_node():
+    sb, cf = setup()
+    # 强制清理
     os.system("pkill -9 sing-box >/dev/null 2>&1")
     os.system("pkill -9 cloudflared >/dev/null 2>&1")
-    time.sleep(1)
+    time.sleep(2)
 
-    # 生成配置 (直接代理)
+    # 简易直接代理配置
     cfg = {
         "log": {"level": "error"},
         "inbounds": [{
@@ -66,39 +67,36 @@ def start_services():
         }],
         "outbounds": [{"type": "direct", "domain_strategy": "ipv4_only"}]
     }
-    with open(BASE_DIR / "sb.json", "w") as f: json.dump(cfg, f)
+    with open("sb.json", "w") as f: json.dump(cfg, f)
 
-    # 启动子进程
-    subprocess.Popen([str(sb), "run", "-c", str(BASE_DIR / "sb.json")], start_new_session=True)
+    # 启动
+    subprocess.Popen([str(sb), "run", "-c", "sb.json"], start_new_session=True)
     subprocess.Popen([str(cf), "tunnel", "--no-autoupdate", "run", "--token", TOKEN], start_new_session=True)
     
-    # --- 启动保活线程 ---
+    # 启动保活
     threading.Thread(target=keep_alive, daemon=True).start()
-    
     return True
 
 def main():
-    st.set_page_config(page_title="Direct Proxy", page_icon="🌐")
-    st.title("🌐 Stable Direct Gateway")
+    st.set_page_config(page_title="Stable Node", page_icon="🛡️")
+    st.title("🛡️ Single Instance Gateway")
 
     if not TOKEN or not DOMAIN:
-        st.error("请在 Secrets 中配置 TOKEN 和 DOMAIN (不带 https://)")
+        st.warning("Please set TOKEN and DOMAIN in Secrets.")
         return
 
-    start_services()
+    start_node()
 
-    # 节点连接信息
-    vmess_cfg = {
-        "v": "2", "ps": "Direct-Stable", "add": DOMAIN, "port": "443", "id": UID,
-        "net": "ws", "host": DOMAIN, "path": f"/{UID[:8]}-vm", "tls": "tls", "sni": DOMAIN
-    }
-    link = "vmess://" + base64.b64encode(json.dumps(vmess_cfg).encode()).decode()
+    # 节点详情
+    vmess = {"v":"2", "ps":"Direct-Stable", "add":DOMAIN, "port":"443", "id":UID, "net":"ws", "host":DOMAIN, "path":f"/{UID[:8]}-vm", "tls":"tls", "sni":DOMAIN}
+    link = "vmess://" + base64.b64encode(json.dumps(vmess).encode()).decode()
 
-    st.success("✅ 服务运行中且已开启 30 分钟防休眠保护")
-    st.markdown("---")
-    st.code(link, language="text")
+    st.success("✅ Application is active with 30-min keep-alive.")
+    st.code(link)
     
-    st.info(f"保活域名: {DOMAIN} | 端口: {PORT}")
+    if st.button("Reset Service"):
+        st.cache_resource.clear()
+        st.rerun()
 
 if __name__ == "__main__":
     main()
