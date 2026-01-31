@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-import os, sys, json, base64, platform, subprocess, ssl, time
+import os, sys, json, base64, platform, subprocess, ssl, time, tarfile
 from pathlib import Path
 import urllib.request
 
-# --- 环境适配：强制使用容器可写的 /tmp 路径 ---
-DIR = Path("/tmp/.agsb_service")
+# --- 环境自适应配置 ---
+# 强制使用 /tmp 确保在 Streamlit Cloud 有写入和执行权限
+DIR = Path("/tmp/.agsb_final")
 IP_URL = "https://raw.githubusercontent.com/MIGHTYBLANK001/OT/refs/heads/main/IP"
 
 # 默认参数
@@ -13,36 +14,31 @@ PORT = 49999
 TOKEN = "eyJhIjoiN2UxMzc3ODMyY2VmOTliZTIxYjI3MTQzMWU3NzA1ZWYiLCJ0IjoiMzYxNmQ5NzMtNmViMi00ZDViLWFhYWMtZjIwNjM4YzVjMzdkIiwicyI6IllXVXlNRGswWVRVdFpUZzRaQzAwTURkaExUa3pNMkl0WlRGbVptUXlOekl6WVRCaiJ9"
 DOMAIN = "pynode.lun.xx.kg"
 
-def download_file(url, filename):
-    """原生 Python 下载，解决 curl (23) 权限报错"""
-    print(f"[*] 正在下载: {filename}...")
-    ctx = ssl._create_unverified_context()
-    try:
-        with urllib.request.urlopen(url, context=ctx) as response, open(filename, 'wb') as out_file:
-            data = response.read()
-            out_file.write(data)
-        os.chmod(filename, 0o755)
-        return True
-    except Exception as e:
-        print(f"[-] 下载失败 {filename}: {e}")
-        return False
-
-def setup():
+def download_and_extract():
     if not DIR.exists(): DIR.mkdir(parents=True, exist_ok=True)
     os.chdir(DIR)
-    
+    ctx = ssl._create_unverified_context()
     arch = "amd64" if "x86_64" in platform.machine() else "arm64"
     
-    # 1. 下载核心 (改为直接从 GitHub 下载编译好的二进制或通过 URL)
-    # 注意：此处建议使用您备份的可靠直连链接
+    # 1. 下载并解压 Sing-box (原生 Python 处理)
     sb_url = f"https://github.com/SagerNet/sing-box/releases/download/v1.8.5/sing-box-1.8.5-linux-{arch}.tar.gz"
+    print(f"[*] 正在下载 Sing-box...")
+    sb_tar = "sb.tar.gz"
+    urllib.request.urlretrieve(sb_url, sb_tar)
+    with tarfile.open(sb_tar) as tar:
+        tar.extractall()
+        # 寻找解压后的 sing-box 二进制文件位置并移动到当前目录
+        for p in Path(".").rglob("sing-box"):
+            if p.is_file():
+                os.rename(p, "sing-box")
+                break
+    os.chmod("sing-box", 0o755)
+
+    # 2. 下载 Cloudflared
+    print(f"[*] 正在下载 Cloudflared...")
     cf_url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{arch}"
-    
-    # 自动解压 sing-box (简化逻辑)
-    if not (DIR / "sing-box").exists():
-        os.system(f"wget -qO- {sb_url} | tar xz --strip-components=1")
-    if not (DIR / "cloudflared").exists():
-        download_file(cf_url, "cloudflared")
+    urllib.request.urlretrieve(cf_url, "cloudflared")
+    os.chmod("cloudflared", 0o755)
 
 def create_config():
     # 自动生成 WARP 密钥
@@ -50,7 +46,7 @@ def create_config():
         res = subprocess.check_output(["./sing-box", "generate", "wg-keypair"]).decode().split()
         priv_key = res[2]
     except:
-        priv_key = "GE6Ek7S...=" # 兜底
+        priv_key = "GE6Ek7S..." # 兜底
 
     ws_path = f"/{UID[:8]}-vm"
     cfg = {
@@ -67,31 +63,32 @@ def create_config():
         ],
         "route": {
             "rules": [
-                # AI 服务分流：OpenAI, Claude, Gemini, Copilot
                 {
                     "domain_suffix": [
                         "openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com",
-                        "anthropic.com", "claude.ai", "gemini.google.com", "proactive.google.com",
-                        "bing.com", "microsoftapp.net"
+                        "anthropic.com", "claude.ai", "gemini.google.com", "bing.com"
                     ],
                     "outbound": "warp"
                 },
-                {"geosite": ["netflix", "disney"], "outbound": "warp"}
+                {"geosite": ["netflix", "disney", "google"], "outbound": "warp"}
             ],
             "final": "direct"
         }
     }
     with open("sb.json", "w") as f: json.dump(cfg, f, indent=2)
 
-def run():
-    print("[*] 启动双进程隧道...")
+def run_services():
+    print("[*] 启动双隧道服务...")
     os.system("pkill -9 sing-box cloudflared >/dev/null 2>&1")
     
-    # 使用 Popen 确保不会阻塞主进程
-    subprocess.Popen(["./sing-box", "run", "-c", "sb.json"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.Popen(["./cloudflared", "tunnel", "--no-autoupdate", "run", "--token", TOKEN], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # 显式使用绝对路径启动，防止 FileNotFoundError
+    sb_bin = str(DIR / "sing-box")
+    cf_bin = str(DIR / "cloudflared")
     
-    # 生成节点链接
+    subprocess.Popen([sb_bin, "run", "-c", "sb.json"], cwd=DIR, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen([cf_bin, "tunnel", "--no-autoupdate", "run", "--token", TOKEN], cwd=DIR, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    # 获取优选IP并输出节点
     try:
         ctx = ssl._create_unverified_context()
         ips = urllib.request.urlopen(IP_URL, context=ctx).read().decode().splitlines()
@@ -100,14 +97,14 @@ def run():
             v = {"v":"2","ps":f"AI-WARP-{ip}","add":ip,"port":"443","id":UID,"net":"ws","host":DOMAIN,"path":f"/{UID[:8]}-vm?ed=2048","tls":"tls","sni":DOMAIN}
             nodes.append("vmess://" + base64.b64encode(json.dumps(v).encode()).decode())
         
-        with open("allnodes.txt", "w") as f: f.write("\n".join(nodes))
-        print(f"\n✅ 部署完成！\n节点已生成至: {DIR}/allnodes.txt\nAI 服务已强制分流至 WARP 节点。")
+        print(f"\n✅ 部署完成！\n🚀 AI 服务（ChatGPT/Claude）已强制走 WARP 出站。")
+        print(f"🔗 首选节点:\n{nodes[0] if nodes else '获取失败'}")
     except:
-        print("[-] 节点获取失败，请确认 IP_URL 连通性。")
+        print("[-] 节点生成异常")
 
 if __name__ == "__main__":
-    setup()
+    download_and_extract()
     create_config()
-    run()
-    # 容器保活：防止脚本直接退出导致容器销毁进程
-    while True: time.sleep(100)
+    run_services()
+    # 保持主线程运行，防止容器关闭
+    while True: time.sleep(60)
