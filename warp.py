@@ -12,7 +12,6 @@ PORT = 49999
 WS_PATH = f"/{UID[:8]}-vm"
 
 def get_warp_config():
-    """获取 WARP 注册信息 (移植自 argosbx.sh)"""
     try:
         url = "https://warp.xijp.eu.org"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -25,7 +24,6 @@ def get_warp_config():
                 return pvk, v6, json.loads(res)
     except:
         pass
-    # 备选静态配置
     return "52cuYFgCJXp0LAq7+nWJIbCXXgU9eGggOc+Hlfz5u6A=", "2606:4700:110:8d8d:1845:c39f:2dd5:a03a", [215, 69, 233]
 
 def setup():
@@ -53,15 +51,13 @@ def setup():
 @st.cache_resource
 def start_node():
     sb, cf = setup()
-    # 彻底清理残留进程
     os.system("pkill -9 sing-box >/dev/null 2>&1")
     os.system("pkill -9 cloudflared >/dev/null 2>&1")
     time.sleep(2)
 
-    # 获取 WARP 参数
     pvk, wpv6, res = get_warp_config()
 
-    # Sing-box 混合配置
+    # 修正后的配置：将 warp-out 放在第一个作为默认出站
     cfg = {
         "log": {"level": "error"},
         "inbounds": [{
@@ -70,7 +66,6 @@ def start_node():
             "transport": {"type": "ws", "path": WS_PATH}
         }],
         "outbounds": [
-            {"type": "direct", "tag": "direct"},
             {
                 "type": "wireguard",
                 "tag": "warp-out",
@@ -81,22 +76,23 @@ def start_node():
                 "peer_public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
                 "reserved": res,
                 "mtu": 1280
-            }
+            },
+            {"type": "direct", "tag": "direct"}
         ],
         "route": {
             "rules": [
-                {"protocol": "dns", "outbound": "direct"},
-                {"outbound": "warp-out"}
-            ]
+                # DNS 强制直连
+                {"protocol": "dns", "outbound": "direct"}
+                # 其余流量会默认流向第一个出站 (warp-out)
+            ],
+            "final": "warp-out" # 显式指定默认出站，修复 missing conditions 报错
         }
     }
     with open("sb.json", "w") as f: json.dump(cfg, f)
 
-    # 启动进程
     subprocess.Popen([str(sb), "run", "-c", "sb.json"], start_new_session=True)
     subprocess.Popen([str(cf), "tunnel", "--no-autoupdate", "run", "--token", TOKEN], start_new_session=True)
     
-    # 构造并打印节点链接到日志
     vmess = {"v":"2", "ps":"WARP-Streamlit", "add":DOMAIN, "port":"443", "id":UID, "net":"ws", "host":DOMAIN, "path":WS_PATH, "tls":"tls", "sni":DOMAIN}
     link = "vmess://" + base64.b64encode(json.dumps(vmess).encode()).decode()
     print(f"\n[SYSTEM_LOG] NODE_LINK: {link}\n", flush=True)
@@ -109,11 +105,11 @@ def main():
     st.title("🟢 Service Online")
     
     if not TOKEN or not DOMAIN:
-        st.error("Missing Secrets: TOKEN or DOMAIN")
+        st.error("Missing Secrets!")
         return
 
     start_node()
-    st.success("Tunnel and Sing-box (WARP) started. Check console logs for connection info.")
+    st.success("Tunnel and WARP-Node started. Check logs for link.")
 
 if __name__ == "__main__":
     main()
