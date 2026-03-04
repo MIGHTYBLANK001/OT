@@ -12,7 +12,6 @@ PORT = 49999
 WS_PATH = f"/{UID[:8]}-vm"
 
 def setup_binaries():
-    """下载并解压必要的二进制文件"""
     if not BASE_DIR.exists(): BASE_DIR.mkdir(parents=True)
     os.chdir(BASE_DIR)
     arch = "amd64" if "x86_64" in platform.machine() else "arm64"
@@ -36,14 +35,11 @@ def setup_binaries():
 
 @st.cache_resource
 def start_services():
-    """启动核心代理服务"""
     sb, cf = setup_binaries()
-    # 清理旧进程防止端口占用
     os.system("pkill -9 sing-box >/dev/null 2>&1")
     os.system("pkill -9 cloudflared >/dev/null 2>&1")
     time.sleep(1)
 
-    # 极简配置：直接出站
     cfg = {
         "log": {"level": "error"},
         "inbounds": [{
@@ -54,13 +50,11 @@ def start_services():
         }],
         "outbounds": [{"type": "direct"}]
     }
-    with open(BASE_DIR / "sb.json", "w") as f: json.dump(cfg, f)
+    with open("sb.json", "w") as f: json.dump(cfg, f)
 
-    # 后台运行服务
     subprocess.Popen([str(sb), "run", "-c", "sb.json"], start_new_session=True)
     subprocess.Popen([str(cf), "tunnel", "--no-autoupdate", "run", "--token", TOKEN], start_new_session=True)
     
-    # 构造节点链接并打印到控制台
     vmess = {"v":"2", "ps":"Streamlit-Node", "add":DOMAIN, "port":"443", "id":UID, "net":"ws", "host":DOMAIN, "path":WS_PATH, "tls":"tls", "sni":DOMAIN}
     link = "vmess://" + base64.b64encode(json.dumps(vmess).encode()).decode()
     print(f"\n[NODE_LINK] {link}\n", flush=True)
@@ -69,14 +63,14 @@ def start_services():
 def main():
     st.set_page_config(page_title="Node", page_icon="🟢")
     st.markdown("<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;}</style>", unsafe_allow_html=True)
-    st.title("🟢 System Active")
+    st.title("🟢 Service Online")
     
     if not TOKEN or not DOMAIN or not UID:
-        st.error("Missing Secrets (TOKEN, DOMAIN, or UUID)!")
+        st.error("Missing Secrets!")
         return
 
     start_services()
-    st.success("Services are running. Connection info available in console logs.")
+    st.success("Running. Check logs for link.")
 
 if __name__ == "__main__":
     main()
