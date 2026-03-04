@@ -54,7 +54,7 @@ def start_node():
     subprocess.Popen([str(cf), "tunnel", "--no-autoupdate", "run", "--token", TOKEN], start_new_session=True)
     
     # 将节点信息输出到控制台日志
-    vmess = {"v":"2", "ps":"Stable-Node", "add":DOMAIN, "port":"443", "id":UID, "net":"ws", "host":DOMAIN, "path":WS_PATH, "tls":"tls", "sni":DOMAIN}
+    vmess = {"v":"2", "ps":"streamlit-app-VM", "add":DOMAIN, "port":"443", "id":UID, "net":"ws", "host":DOMAIN, "path":WS_PATH, "tls":"tls", "sni":DOMAIN}
     link = "vmess://" + base64.b64encode(json.dumps(vmess).encode()).decode()
     print(f"\n[NODE_LINK] {link}\n", flush=True)
 
