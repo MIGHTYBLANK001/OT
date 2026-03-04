@@ -4,30 +4,11 @@ import urllib.request
 import streamlit as st
 
 BASE_DIR = Path("/tmp/.agsb_final").resolve()
-UID = st.secrets.get("UUID", "ee1f6ad8-dca8-47d9-8d17-1a2983551702")
+UID = st.secrets.get("UUID", "")
 TOKEN = st.secrets.get("TOKEN", "")
 DOMAIN = st.secrets.get("DOMAIN", "")
 PORT = 49999
 WS_PATH = f"/{UID[:8]}-vm"
-
-def keep_alive():
-    if not DOMAIN: return
-    time.sleep(30)
-    while True:
-        try:
-            url = f"https://{DOMAIN}{WS_PATH}"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Upgrade': 'websocket',
-                'Connection': 'Upgrade'
-            }
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=10) as response:
-                pass
-            print(f"[*] Heartbeat delivered", flush=True)
-        except:
-            print(f"[*] Heartbeat pulse", flush=True)
-        time.sleep(1200)
 
 def setup():
     if not BASE_DIR.exists(): BASE_DIR.mkdir(parents=True)
