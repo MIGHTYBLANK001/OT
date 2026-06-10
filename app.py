@@ -2,30 +2,6 @@ import os, json, base64, platform, subprocess, time, tarfile
 import threading
 from pathlib import Path
 import urllib.request
-
-# ================= 📦 动态自建容器环境（单脚本核心） =================
-# 在 Streamlit 还没有加载业务前，强行在容器根目录生成平台所需的依赖配置文件
-def bootstrap_container_environment():
-    """
-    通过在运行期动态写入 packages.txt 和 requirements.txt，
-    确保 Streamlit Cloud 容器能够自动下载并配置 Debian Chromium 浏览器。
-    """
-    # 1. 动态生成系统级包管理文件 packages.txt
-    if not Path("packages.txt").exists():
-        with open("packages.txt", "w", encoding="utf-8") as f:
-            f.write("chromium\nchromium-driver\n")
-        print("[Bootstrap] packages.txt 已自动生成，请等待系统二次部署完成。", flush=True)
-
-    # 2. 动态生成 Python 依赖文件 requirements.txt
-    if not Path("requirements.txt").exists():
-        with open("requirements.txt", "w", encoding="utf-8") as f:
-            f.write("streamlit\nselenium\n")
-        print("[Bootstrap] requirements.txt 已自动生成。", flush=True)
-
-# 立即执行环境初始化
-bootstrap_container_environment()
-
-# 环境配置完成后，安全导入 Streamlit 组件
 import streamlit as st
 
 # ================= ⚙️ 核心代理服务配置（完全保留原始逻辑） =================
