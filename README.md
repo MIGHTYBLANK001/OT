@@ -1,7 +1,7 @@
 
 部署hy2 for lxc 128
 
-wget -O- https://raw.githubusercontent.com/MIGHTYBLANK001/OT/new/main/hy2.sh | bash
+wget -O- [https://raw.githubusercontent.com/MIGHTYBLANK001/OT/new/main/hy2.sh](https://raw.githubusercontent.com/MIGHTYBLANK001/OT/refs/heads/main/hy2.sh) | bash
 
 重启hy2
 
