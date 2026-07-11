@@ -26,7 +26,7 @@ echo "🔑 生成自签 TLS 证书..."
 openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
     -days 3650 -keyout /opt/hysteria/key.pem -out /opt/hysteria/cert.pem -subj "/CN=www.bing.com"
 
-# 3. 写入最终验证成功的强分流配置文件
+# 3. 写入最终验证成功的强分流配置文件 (ACL 绝对控制版)
 echo "📄 写入强分流极简配置文件..."
 cat > /opt/hysteria/server.yaml <<EOF
 listen: ":${PORT}"
@@ -54,12 +54,12 @@ bandwidth:
   down: "200mbps"
 EOF
 
-# 4. 配置轻量级守护脚本
+# 4. 配置绝对兼容 LXC 的进程文件级守护脚本
 echo "⚙️ 配置后台守护机制..."
 cat > /opt/hysteria/daemon.sh <<'EOF'
 #!/bin/sh
 while true; do
-    if ! pgrep -f "/opt/hysteria/hysteria server" > /dev/null; then
+    if ! ps aux | grep "/opt/hysteria/hysteria" | grep -v "grep" > /dev/null; then
         /opt/hysteria/hysteria server -c /opt/hysteria/server.yaml > /dev/null 2>&1 &
     fi
     sleep 10
@@ -67,7 +67,7 @@ done
 EOF
 chmod +x /opt/hysteria/daemon.sh
 
-# 5. 适配 LXC 容器的开机自启动项 (强兼容模式)
+# 5. 适配 LXC 容器的开机自启动项
 echo "🚀 写入系统开机自动启动项..."
 rc_local="/etc/rc.local"
 if [ ! -f "$rc_local" ]; then
@@ -76,7 +76,6 @@ if [ ! -f "$rc_local" ]; then
 fi
 chmod +x "$rc_local"
 
-# 确保在 exit 0 之前插入自启守护进程命令
 if ! grep -q "/opt/hysteria/daemon.sh" "$rc_local"; then
     sed -i '/exit 0/i \/opt/hysteria/daemon.sh &' "$rc_local" || echo "/opt/hysteria/daemon.sh &" >> "$rc_local"
 fi
@@ -87,7 +86,7 @@ nohup /opt/hysteria/daemon.sh > /dev/null 2>&1 &
 # 获取公网 IP 并回显节点
 IP=$(curl -s --max-time 5 https://api.ipify.org || echo "YOUR_SERVER_IP")
 echo "=========================================================================="
-echo "🎉 Hysteria2 (ACL 强控闭环版) 部署成功！"
-echo "📱 手机/电脑客户端通用导入连接节点（已开启 insecure 信任自签）："
+echo "🎉 Hysteria2 (LXC 强保活版) 部署成功！"
+echo "📱 手机/电脑客户端通用导入连接节点："
 echo "hysteria2://${PASSWORD}@${IP}:${PORT}?sni=www.bing.com&alpn=h3&insecure=1#LXC-Hy2-Chain"
 echo "=========================================================================="
