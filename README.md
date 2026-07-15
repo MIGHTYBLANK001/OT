@@ -11,3 +11,11 @@ pkill -f daemon.sh || true && pkill -f hysteria || true && nohup /opt/hysteria/d
 pkill -f daemon.sh || true && pkill -f hysteria || true
 
 /opt/hysteria/hysteria server -c /opt/hysteria/server.yaml
+
+
+
+云记事本部署：
+
+CF-WORKER-ONLINE-NOTE.JS:
+
+KV: NOTES
