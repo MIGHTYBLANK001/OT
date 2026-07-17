@@ -1,0 +1,73 @@
+name: Update IP List
+
+on:
+  # 允许手动触发
+  workflow_dispatch:
+  # 每天 UTC 时间 18:00 (北京时间凌晨 2:00) 自动运行一次，您可以根据需要调整
+  schedule:
+    - cron: '0 18 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  update-ip:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 检出您自己的仓库（MIGHTYBLANK001/OT）
+      - name: Checkout destination repo
+        uses: actions/checkout@v4
+
+      # 2. 临时检出 DustinWin/BestCF 仓库的 bestcf 分支
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+        with:
+          repository: 'DustinWin/BestCF'
+          ref: 'bestcf'
+          path: 'bestcf-src'
+
+      # 3. 处理数据并整合到 IP 文件
+      - name: Process and Merge IPs
+        run: |
+          # 确保目标目录存在（如果 IP 在根目录，这一步通常可有可无，但建议保留）
+          # 如果您的 IP 文件在子目录，请手动修改路径（例如：mkdir -p subfolder）
+          
+          # 清空或初始化您仓库中的 IP 文件
+          > IP
+          
+          # 遍历源仓库目录中的所有 txt 文件
+          # 按照字母顺序依次读取
+          for file in bestcf-src/*.txt; do
+            if [ -f "$file" ]; then
+              filename=$(basename "$file")
+              echo "正在处理文件: $filename"
+              
+              # 写入一个标记，方便区分数据的来源（如果您不需要标记，可以删掉下面这行）
+              echo "# --- From $filename ---" >> IP
+              
+              # 获取前 5 行并追加到 IP 文件中
+              head -n 5 "$file" >> IP
+              
+              # 换行，保持排版美观
+              echo "" >> IP
+            fi
+          done
+          
+          # 清理临时下载的源仓库文件，避免被一起提交
+          rm -rf bestcf-src
+
+      # 4. 提交并推送到您的仓库
+      - name: Commit and Push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # 检查 IP 文件是否有变动
+          if [ -n "$(git status --porcelain IP)" ]; then
+            git add IP
+            git commit -m "Auto-update IP list from BestCF ($(date +'%Y-%m-%d'))"
+            git push
+          else
+            echo "IP 文件没有变化，跳过提交。"
+          fi
