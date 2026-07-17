@@ -1,9 +1,40 @@
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-    const key = url.pathname === '/' ? 'default_note' : url.pathname;
+    // ==========================================
+    // 🛠️ 【安全配置】在这里设置你专属的隐藏访问路径（必须以 / 开头）
+    // ==========================================
+    const SECRET_PATH = "/这里改成你想要的隐藏路径，必须斜杠开头"; 
 
-    // 处理保存请求 (POST)
+    const url = new URL(request.url);
+    
+    // 如果访问的路径不匹配你的专属暗号，直接返回伪装的 404 页面
+    if (url.pathname !== SECRET_PATH) {
+      return new Response(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <title>404 Not Found</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fff; color: #000; padding: 50px; text-align: center; }
+            h1 { font-size: 24px; font-weight: 500; margin-top: 100px; display: inline-block; border-right: 1px solid rgba(0, 0, 0, 0.3); padding: 0 20px 0 0; margin-right: 20px; align-items: center; }
+            .desc { inline-block; text-align: left; vertical-align: middle; display: inline-block; font-size: 14px; font-weight: normal; line-height: 49px; margin: 0; padding: 0; }
+          </style>
+        </head>
+        <body>
+          <div>
+            <h1>404</h1>
+            <div class="desc">This page could not be found.</div>
+          </div>
+        </body>
+        </html>
+      `, { status: 404, headers: { 'Content-Type': 'text/html' } });
+    }
+
+    // 将 KV 存储的 key 锁定为你的隐藏路径名
+    const key = SECRET_PATH;
+
+    // 处理保存请求 (POST) - 只有通过了上面的路径校验才会走到这里
     if (request.method === 'POST') {
       const text = await request.text();
       await env.NOTES.put(key, text);
@@ -13,16 +44,15 @@ export default {
     // 获取当前存储的内容
     const value = await env.NOTES.get(key) || '';
 
-    // 返回优化后的 HTML 页面
+    // 返回带自动保存与手动保存的 16:9 720P 页面
     const html = `
     <!DOCTYPE html>
     <html>
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>在线轻记事本 (720P)</title>
+      <title>在线轻记事本</title>
       <style>
-        /* 1. 经典护眼豆沙绿背景 */
         body { 
           margin: 0; 
           padding: 30px 20px; 
@@ -35,11 +65,10 @@ export default {
           box-sizing: border-box;
         }
 
-        /* 2. 外层容器：最大限制在 720P 宽度 (1280px) */
         .container {
           width: 100%;
-          max-width: 1280px; /* 720P 宽 */
-          background: #C7EDCC; /* 标准豆沙绿 */
+          max-width: 1280px; 
+          background: #C7EDCC; 
           border-radius: 12px;
           box-shadow: 0 12px 30px rgba(60, 90, 60, 0.15);
           padding: 24px;
@@ -58,20 +87,18 @@ export default {
           font-size: 14px;
         }
 
-        /* 3. 文本框：强制 16:9 比例 */
         textarea { 
           width: 100%; 
-          /* 使用 aspect-ratio 属性锁定 16:9 比例 */
           aspect-ratio: 16 / 9; 
-          background: #E1F3E5; /* 稍浅的豆沙绿，高对比度不刺眼 */
-          color: #2E4F33; /* 暗绿色字体 */
+          background: #E1F3E5; 
+          color: #2E4F33; 
           border: 1px solid #B2D8B9; 
           padding: 20px; 
           box-sizing: border-box; 
           font-size: 16px; 
           line-height: 1.6;
           border-radius: 8px; 
-          resize: none; /* 锁定比例，禁止用户手动拉伸 */
+          resize: none; 
           outline: none; 
           font-family: inherit;
           transition: border-color 0.2s;
@@ -80,7 +107,6 @@ export default {
           border-color: #7BB385;
         }
 
-        /* 4. 底部工具栏与保存按钮 */
         .footer {
           display: flex;
           justify-content: space-between;
@@ -119,8 +145,8 @@ export default {
     <body>
       <div class="container">
         <div class="header">
-          <span>在线编辑剪贴板 (720P 16:9 比例)</span>
-          <span style="font-weight: normal; opacity: 0.7;">自动保存 / Ctrl+S</span>
+          <span>在线编辑剪贴板</span>
+          <span>自动保存 / Ctrl+S</span>
         </div>
         
         <textarea id="pad" placeholder="在此输入内容...">${value}</textarea>
@@ -161,7 +187,7 @@ export default {
           }
         }
 
-        // 自动保存 (停止打字1.5秒)
+        // 自动保存
         pad.addEventListener('input', () => {
           clearTimeout(timeout);
           timeout = setTimeout(saveData, 1500);
