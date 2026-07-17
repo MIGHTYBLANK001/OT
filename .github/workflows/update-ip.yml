@@ -43,9 +43,6 @@ jobs:
               filename=$(basename "$file")
               echo "正在处理文件: $filename"
               
-              # 写入一个标记，方便区分数据的来源（如果您不需要标记，可以删掉下面这行）
-              echo "# --- From $filename ---" >> IP
-              
               # 获取前 5 行并追加到 IP 文件中
               head -n 5 "$file" >> IP
               
