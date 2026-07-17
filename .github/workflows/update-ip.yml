@@ -1,73 +1,100 @@
-name: Update IP List
+name: Fetch and Merge Best CF IPs & Domains
 
 on:
-  # 允许手动触发
   workflow_dispatch:
-  # 每天 UTC 时间 18:00 (北京时间凌晨 2:00) 自动运行一次
   schedule:
-    - cron: '0 18 * * *'
+    - cron: '0 18 * * *' # 北京时间凌晨 2:00
 
 permissions:
   contents: write
 
 jobs:
-  update-ip:
+  fetch-ips-and-domains:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 检出您自己的仓库（MIGHTYBLANK001/OT）
       - name: Checkout destination repo
         uses: actions/checkout@v4
 
-      # 2. 临时检出 DustinWin/BestCF 仓库的 bestcf 分支
-      - name: Checkout source repo
-        uses: actions/checkout@v4
-        with:
-          repository: 'DustinWin/BestCF'
-          ref: 'bestcf'
-          path: 'bestcf-src'
-
-      # 3. 过滤、处理数据并整合到 IP 文件
-      - name: Process and Merge IPs
+      - name: Fetch and Filter Data
         run: |
-          # 清空或初始化您仓库中的 IP 文件
+          # 创建临时工作目录并清空目标 IP 文件
+          mkdir -p ./tmp_data/
           > IP
-          
-          # 遍历源仓库目录中的所有 txt 文件
-          for file in bestcf-src/*.txt; do
-            if [ -f "$file" ]; then
-              filename=$(basename "$file")
-              
-              # 【过滤机制】在这里填入你想要排除的文件名
-              # 如果想排除多个，用 | 隔开，例如: "proxy-ip.txt" | "bestcf-domain.txt"
-              case "$filename" in
-                "proxy-ip.txt" | "bestcf-domain.txt")
-                  echo "跳过不需要的文件: $filename"
-                  continue
-                  ;;
-              esac
-              
-              echo "正在提取文件: $filename"
-              
-              # 直接获取前 5 行并追加到 IP 文件中（去掉了来源标记和多余空行）
-              head -n 5 "$file" >> IP
+
+          # ==========================================
+          # 1. 抓取 bestcf-domain (域名) 
+          # ==========================================
+          # curl -sSL https://cf.090227.xyz | grep 'copyDomain' | awk -F "'" '{print $2}' > ./tmp_data/01-domain.txt
+          # curl -sSL https://cf.090227.xyz | sed -n '/官方优选域名列表/,/<\/pre>/p' | grep '\.' | sed 's/.*<pre>//; s/<\/pre>$//; s/#.*//' >> ./tmp_data/01-domain.txt
+          curl -sSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -Ev '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' >> ./tmp_data/01-domain.txt
+          curl -sSL https://www.wetest.vip/page/cloudflare/cname.html | grep 'data-label=\"地址名称\"' | awk -F '[<>]' '{print $3}' | sed 's/^\*/bestcf/' >> ./tmp_data/01-domain.txt
+
+          # ==========================================
+          # 2. 抓取 CMCC (移动 IP)
+          # ==========================================
+          # curl -sSL https://cf.090227.xyz/cmcc?ips=5 | sed 's/#.*//' > ./tmp_data/02-cmcc.txt
+          # curl -sSL https://cf.090227.xyz/cmcc-ipv6 | sed 's/#.*//' >> ./tmp_data/02-cmcc.txt
+          curl -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CM[].ip' >> ./tmp_data/02-cmcc.txt
+          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys"}' | jq -r '.info[] | select(.line == "CM") | .ip' >> ./tmp_data/02-cmcc.txt
+          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys","type":"v6"}' | jq -r '.info[] | select(.line == "CM") | .ip' >> ./tmp_data/02-cmcc.txt
+          curl -sSL https://www.wetest.vip/page/cloudflare/address_v4.html | awk '/移动/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/02-cmcc.txt
+          curl -sSL https://www.wetest.vip/page/cloudflare/address_v6.html | awk '/移动/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/02-cmcc.txt
+
+          # ==========================================
+          # 3. 抓取 CUCC (联通 IP)
+          # ==========================================
+          # curl -sSL https://cf.090227.xyz/cu?ips=5 | sed 's/#.*//' > ./tmp_data/03-cucc.txt
+          curl -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CU[].ip' >> ./tmp_data/03-cucc.txt
+          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys"}' | jq -r '.info[] | select(.line == "CU") | .ip' >> ./tmp_data/03-cucc.txt
+          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys","type":"v6"}' | jq -r '.info[] | select(.line == "CU") | .ip' >> ./tmp_data/03-cucc.txt
+          curl -sSL https://www.wetest.vip/page/cloudflare/address_v4.html | awk '/联通/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/03-cucc.txt
+          curl -sSL https://www.wetest.vip/page/cloudflare/address_v6.html | awk '/联通/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/03-cucc.txt
+
+          # ==========================================
+          # 4. 抓取 CTCC (电信 IP)
+          # ==========================================
+          # curl -sSL https://cf.090227.xyz/ct?ips=5 | sed 's/#.*//' > ./tmp_data/04-ctcc.txt
+          curl -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CT[].ip' >> ./tmp_data/04-ctcc.txt
+          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys"}' | jq -r '.info[] | select(.line == "CT") | .ip' >> ./tmp_data/04-ctcc.txt
+          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys","type":"v6"}' | jq -r '.info[] | select(.line == "CT") | .ip' >> ./tmp_data/04-ctcc.txt
+          curl -sSL https://www.wetest.vip/page/cloudflare/address_v4.html | awk '/电信/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/04-ctcc.txt
+          curl -sSL https://www.wetest.vip/page/cloudflare/address_v6.html | awk '/电信/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/04-ctcc.txt
+
+          # ==========================================
+          # 5. 抓取 CF-IP (公共 IP)
+          # ==========================================
+          curl -sSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' > ./tmp_data/05-cfip.txt
+          curl -sSL https://ip.164746.xyz/ipTop10.html | tr ',' '\n' >> ./tmp_data/05-cfip.txt
+          curl -sSL https://ipdb.api.030101.xyz/?type=bestcfv4 >> ./tmp_data/05-cfip.txt
+          curl -sSL https://ipdb.api.030101.xyz/?type=bestcfv6 >> ./tmp_data/05-cfip.txt
+
+          # ==========================================
+          # 6. 数据清洗并各自切片前 5 个合并
+          # ==========================================
+          # 采用 01 到 05 命名，确保合并时按 域名 -> 移动 -> 联通 -> 电信 -> 公共 IP 的固定顺序排列
+          for type_file in ./tmp_data/*.txt; do
+            if [ -f "$type_file" ]; then
+              # 1. 移除可能的空行与前后的空格
+              # 2. 移除原始脚本里带的后缀注释
+              # 3. 通过 awk 去重并保持顺序
+              # 4. 用 head -n 5 截取每个分类的前 5 条
+              sed 's/[[:space:]]//g; s/#.*//' "$type_file" | grep -v '^$' | awk '!a[$0]++' | head -n 5 >> IP
             fi
           done
-          
-          # 清理临时下载的源仓库文件
-          rm -rf bestcf-src
 
-      # 4. 提交并推送到您的仓库
+          # 清理临时目录
+          rm -rf ./tmp_data/
+
       - name: Commit and Push changes
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # 检查 IP 文件是否有变动
           if [ -n "$(git status --porcelain IP)" ]; then
             git add IP
-            git commit -m "Auto-update IP list without proxy IPs ($(date +'%Y-%m-%d'))"
+            git commit -m "Auto-refresh Cloudflare Domains and top 5 IPs ($(date +'%Y-%m-%d'))"
             git push
           else
-            echo "IP 文件没有变化，跳过提交。"
+            echo "没有产生任何新的变更。"
           fi
