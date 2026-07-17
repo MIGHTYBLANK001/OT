@@ -25,61 +25,57 @@ jobs:
           # ==========================================
           # 1. 抓取 bestcf-domain (域名) 
           # ==========================================
-          # curl -sSL https://cf.090227.xyz | grep 'copyDomain' | awk -F "'" '{print $2}' > ./tmp_data/01-domain.txt
-          # curl -sSL https://cf.090227.xyz | sed -n '/官方优选域名列表/,/<\/pre>/p' | grep '\.' | sed 's/.*<pre>//; s/<\/pre>$//; s/#.*//' >> ./tmp_data/01-domain.txt
-          curl -sSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -Ev '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' >> ./tmp_data/01-domain.txt
-          curl -sSL https://www.wetest.vip/page/cloudflare/cname.html | grep 'data-label=\"地址名称\"' | awk -F '[<>]' '{print $3}' | sed 's/^\*/bestcf/' >> ./tmp_data/01-domain.txt
+          # curl -sSL https://cf.090227.xyz | grep 'copyDomain' | awk -F "'" '{print $2}' > ./tmp_data/01-domain.txt || true
+          # curl -sSL https://cf.090227.xyz | sed -n '/官方优选域名列表/,/<\/pre>/p' | grep '\.' | sed 's/.*<pre>//; s/<\/pre>$//; s/#.*//' >> ./tmp_data/01-domain.txt || true
+          curl -sSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -Ev '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' >> ./tmp_data/01-domain.txt || true
+          curl -sSL https://www.wetest.vip/page/cloudflare/cname.html | grep 'data-label=\"地址名称\"' | awk -F '[<>]' '{print $3}' | sed 's/^\*/bestcf/' >> ./tmp_data/01-domain.txt || true
 
           # ==========================================
           # 2. 抓取 CMCC (移动 IP)
           # ==========================================
-          # curl -sSL https://cf.090227.xyz/cmcc?ips=5 | sed 's/#.*//' > ./tmp_data/02-cmcc.txt
-          # curl -sSL https://cf.090227.xyz/cmcc-ipv6 | sed 's/#.*//' >> ./tmp_data/02-cmcc.txt
-          curl -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CM[].ip' >> ./tmp_data/02-cmcc.txt
-          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys"}' | jq -r '.info[] | select(.line == "CM") | .ip' >> ./tmp_data/02-cmcc.txt
-          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys","type":"v6"}' | jq -r '.info[] | select(.line == "CM") | .ip' >> ./tmp_data/02-cmcc.txt
-          curl -sSL https://www.wetest.vip/page/cloudflare/address_v4.html | awk '/移动/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/02-cmcc.txt
-          curl -sSL https://www.wetest.vip/page/cloudflare/address_v6.html | awk '/移动/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/02-cmcc.txt
+          # curl -sSL https://cf.090227.xyz/cmcc?ips=5 | sed 's/#.*//' > ./tmp_data/02-cmcc.txt || true
+          # curl -sSL https://cf.090227.xyz/cmcc-ipv6 | sed 's/#.*//' >> ./tmp_data/02-cmcc.txt || true
+          curl -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CM[].ip' >> ./tmp_data/02-cmcc.txt || true
+          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys"}' | jq -r '.info[] | select(.line == "CM") | .ip' >> ./tmp_data/02-cmcc.txt || true
+          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys","type":"v6"}' | jq -r '.info[] | select(.line == "CM") | .ip' >> ./tmp_data/02-cmcc.txt || true
+          curl -sSL https://www.wetest.vip/page/cloudflare/address_v4.html | awk '/移动/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/02-cmcc.txt || true
+          curl -sSL https://www.wetest.vip/page/cloudflare/address_v6.html | awk '/移动/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/02-cmcc.txt || true
 
           # ==========================================
           # 3. 抓取 CUCC (联通 IP)
           # ==========================================
-          # curl -sSL https://cf.090227.xyz/cu?ips=5 | sed 's/#.*//' > ./tmp_data/03-cucc.txt
-          curl -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CU[].ip' >> ./tmp_data/03-cucc.txt
-          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys"}' | jq -r '.info[] | select(.line == "CU") | .ip' >> ./tmp_data/03-cucc.txt
-          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys","type":"v6"}' | jq -r '.info[] | select(.line == "CU") | .ip' >> ./tmp_data/03-cucc.txt
-          curl -sSL https://www.wetest.vip/page/cloudflare/address_v4.html | awk '/联通/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/03-cucc.txt
-          curl -sSL https://www.wetest.vip/page/cloudflare/address_v6.html | awk '/联通/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/03-cucc.txt
+          # curl -sSL https://cf.090227.xyz/cu?ips=5 | sed 's/#.*//' > ./tmp_data/03-cucc.txt || true
+          curl -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CU[].ip' >> ./tmp_data/03-cucc.txt || true
+          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys"}' | jq -r '.info[] | select(.line == "CU") | .ip' >> ./tmp_data/03-cucc.txt || true
+          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys","type":"v6"}' | jq -r '.info[] | select(.line == "CU") | .ip' >> ./tmp_data/03-cucc.txt || true
+          curl -sSL https://www.wetest.vip/page/cloudflare/address_v4.html | awk '/联通/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/03-cucc.txt || true
+          curl -sSL https://www.wetest.vip/page/cloudflare/address_v6.html | awk '/联通/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/03-cucc.txt || true
 
           # ==========================================
           # 4. 抓取 CTCC (电信 IP)
           # ==========================================
-          # curl -sSL https://cf.090227.xyz/ct?ips=5 | sed 's/#.*//' > ./tmp_data/04-ctcc.txt
-          curl -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CT[].ip' >> ./tmp_data/04-ctcc.txt
-          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys"}' | jq -r '.info[] | select(.line == "CT") | .ip' >> ./tmp_data/04-ctcc.txt
-          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys","type":"v6"}' | jq -r '.info[] | select(.line == "CT") | .ip' >> ./tmp_data/04-ctcc.txt
-          curl -sSL https://www.wetest.vip/page/cloudflare/address_v4.html | awk '/电信/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/04-ctcc.txt
-          curl -sSL https://www.wetest.vip/page/cloudflare/address_v6.html | awk '/电信/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/04-ctcc.txt
+          # curl -sSL https://cf.090227.xyz/ct?ips=5 | sed 's/#.*//' > ./tmp_data/04-ctcc.txt || true
+          curl -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CT[].ip' >> ./tmp_data/04-ctcc.txt || true
+          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys"}' | jq -r '.info[] | select(.line == "CT") | .ip' >> ./tmp_data/04-ctcc.txt || true
+          curl -sSL https://api.hostmonit.com/get_optimization_ip --data-raw '{"key":"iDetkOys","type":"v6"}' | jq -r '.info[] | select(.line == "CT") | .ip' >> ./tmp_data/04-ctcc.txt || true
+          curl -sSL https://www.wetest.vip/page/cloudflare/address_v4.html | awk '/电信/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/04-ctcc.txt || true
+          curl -sSL https://www.wetest.vip/page/cloudflare/address_v6.html | awk '/电信/{getline; print}' | awk -F '[<>]' '{print $3}' >> ./tmp_data/04-ctcc.txt || true
 
           # ==========================================
           # 5. 抓取 CF-IP (公共 IP)
           # ==========================================
-          curl -sSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' > ./tmp_data/05-cfip.txt
-          curl -sSL https://ip.164746.xyz/ipTop10.html | tr ',' '\n' >> ./tmp_data/05-cfip.txt
-          curl -sSL https://ipdb.api.030101.xyz/?type=bestcfv4 >> ./tmp_data/05-cfip.txt
-          curl -sSL https://ipdb.api.030101.xyz/?type=bestcfv6 >> ./tmp_data/05-cfip.txt
+          curl -sSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' > ./tmp_data/05-cfip.txt || true
+          curl -sSL https://ip.164746.xyz/ipTop10.html | tr ',' '\n' >> ./tmp_data/05-cfip.txt || true
+          curl -sSL https://ipdb.api.030101.xyz/?type=bestcfv4 >> ./tmp_data/05-cfip.txt || true
+          curl -sSL https://ipdb.api.030101.xyz/?type=bestcfv6 >> ./tmp_data/05-cfip.txt || true
 
           # ==========================================
           # 6. 数据清洗并各自切片前 5 个合并
           # ==========================================
-          # 采用 01 到 05 命名，确保合并时按 域名 -> 移动 -> 联通 -> 电信 -> 公共 IP 的固定顺序排列
           for type_file in ./tmp_data/*.txt; do
             if [ -f "$type_file" ]; then
-              # 1. 移除可能的空行与前后的空格
-              # 2. 移除原始脚本里带的后缀注释
-              # 3. 通过 awk 去重并保持顺序
-              # 4. 用 head -n 5 截取每个分类的前 5 条
-              sed 's/[[:space:]]//g; s/#.*//' "$type_file" | grep -v '^$' | awk '!a[$0]++' | head -n 5 >> IP
+              # 增加针对空文件的保护，确保 grep 不会抛错退出
+              sed 's/[[:space:]]//g; s/#.*//' "$type_file" | grep -v '^$' | awk '!a[$0]++' | head -n 5 >> IP || true
             fi
           done
 
