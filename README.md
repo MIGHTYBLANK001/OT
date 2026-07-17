@@ -19,3 +19,9 @@ pkill -f daemon.sh || true && pkill -f hysteria || true
 CF-WORKER-ONLINE-NOTE.JS:
 
 KV: NOTES
+
+https://github.com/ToiCF/GrainTCP
+
+https://github.com/Luckylos/SS-kuangbao
+
+vless://[你的UUID]@[你的Workers域名或优选IP]:443?encryption=none&security=tls&sni=[你的Workers域名]&type=ws&host=[你的Workers域名]&path=%2F#ToiCF_Kuangbao_Optimized
