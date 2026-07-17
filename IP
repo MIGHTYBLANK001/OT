@@ -1,19 +1,42 @@
-https://raw.githubusercontent.com/DustinWin/BestCF/refs/heads/bestcf/bestcf-domain.txt
+# --- From bestcf-domain.txt ---
+bestcf.030101.xyz
+bestcf.cloudflare.182682.xyz
+bestcf.top
+cdn.2020111.xyz
+cf.0sm.com
 
+# --- From bestcf-ip.txt ---
+162.159.38.97#CF-IPv4_CFSpeedTest_1
+172.64.52.54#CF-IPv4_CFSpeedTest_2
+172.64.53.20#CF-IPv4_CFSpeedTest_3
+172.64.157.167#CF-IPv4_CFSpeedTest_4
+108.162.198.183#CF-IPv4_CFSpeedTest_5
 
-bestcf.030101.xyz#FD-Mingyu维护
-cdn.2020111.xyz#FD-cdn.2020111.xyz
-cdns.doon.eu.org#FD-cdns.doon.eu.org
-cf.0sm.com#FD-cf.0sm.com
-cf.877774.xyz#FD-秋名山维护
-cfip.1323123.xyz#FD-cfip.1323123.xyz
-cfip.xxxxxxxx.tk#FD-OTC维护
-cloudflare.182682.xyz#FD-WeTest.Vip维护
-cloudflare-ip.mofashi.ltd#FD-cloudflare-ip.mofashi.ltd
-fn.130519.xyz#FD-fn.130519.xyz
-freeyx.cloudflare88.eu.org#FD-freeyx.cloudflare88.eu.org
-nrt.xxxxxxxx.nyc.mn#FD-nrt.xxxxxxxx.nyc.mn
-nrtcfdns.zone.id#FD-nrtcfdns.zone.id
-saas.sin.fan#FD-saas.sin.fan
-xn--b6gac.eu.org#FD-xn--b6gac.eu.org
-yg1.ygkkk.dpdns.org#FD-yg1.ygkkk.dpdns.org
+# --- From cmcc-ip.txt ---
+104.17.126.146#CMCC-IPv4_CMLiu_1
+104.16.150.225#CMCC-IPv4_CMLiu_2
+91.193.58.17#CMCC-IPv4_CMLiu_3
+104.17.167.105#CMCC-IPv4_CMLiu_4
+91.193.59.73#CMCC-IPv4_CMLiu_5
+
+# --- From ctcc-ip.txt ---
+198.41.223.119#CTCC-IPv4_CMLiu_1
+108.162.198.50#CTCC-IPv4_CMLiu_2
+173.245.58.50#CTCC-IPv4_CMLiu_3
+8.39.125.98#CTCC-IPv4_CMLiu_4
+173.245.59.101#CTCC-IPv4_CMLiu_5
+
+# --- From cucc-ip.txt ---
+104.26.12.26#CUCC-IPv4_CMLiu_1
+104.26.10.253#CUCC-IPv4_CMLiu_2
+172.67.78.82#CUCC-IPv4_CMLiu_3
+104.26.15.107#CUCC-IPv4_CMLiu_4
+172.67.71.183#CUCC-IPv4_CMLiu_5
+
+# --- From proxy-ip.txt ---
+47.57.245.232#Proxy-IPv4_IPDB_1
+8.212.65.162#Proxy-IPv4_IPDB_2
+8.217.168.149#Proxy-IPv4_IPDB_3
+8.212.14.90#Proxy-IPv4_IPDB_4
+8.212.12.98#Proxy-IPv4_IPDB_5
+
