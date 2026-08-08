@@ -25,27 +25,27 @@ jobs:
           # ==========================================
           # 1. 抓取 vps789 的优选域名 (过滤掉纯IP，只保留域名)并格式化为 域名#域名
           # ==========================================
-          curl -sSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -Ev '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | awk '{print $0 "#" $0}' > ./tmp_data/01-domain.txt || true
+          curl -k -sSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -Ev '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | awk '{print $0 "#" $0}' > ./tmp_data/01-domain.txt || true
 
           # ==========================================
           # 2. 抓取 vps789 的 CMCC (移动 IP) 并格式化为 ip#ip
           # ==========================================
-          curl -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CM[].ip' | awk '{print $0 "#" $0}' > ./tmp_data/02-cmcc.txt || true
+          curl -k -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CM[].ip' | awk '{print $0 "#" $0}' > ./tmp_data/02-cmcc.txt || true
 
           # ==========================================
           # 3. 抓取 vps789 的 CUCC (联通 IP) 并格式化为 ip#ip
           # ==========================================
-          curl -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CU[].ip' | awk '{print $0 "#" $0}' > ./tmp_data/03-cucc.txt || true
+          curl -k -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CU[].ip' | awk '{print $0 "#" $0}' > ./tmp_data/03-cucc.txt || true
 
           # ==========================================
           # 4. 抓取 vps789 的 CTCC (电信 IP) 并格式化为 ip#ip
           # ==========================================
-          curl -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CT[].ip' | awk '{print $0 "#" $0}' > ./tmp_data/04-ctcc.txt || true
+          curl -k -sSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CT[].ip' | awk '{print $0 "#" $0}' > ./tmp_data/04-ctcc.txt || true
 
           # ==========================================
           # 5. 抓取 vps789 的公共优选 IP (只保留纯 IPv4) 并格式化为 ip#ip
           # ==========================================
-          curl -sSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | awk '{print $0 "#" $0}' > ./tmp_data/05-cfip.txt || true
+          curl -k -sSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | awk '{print $0 "#" $0}' > ./tmp_data/05-cfip.txt || true
 
           # ==========================================
           # 6. 数据清洗、去重并各自切片前 5 个合并
