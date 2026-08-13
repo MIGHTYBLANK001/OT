@@ -48,14 +48,14 @@ jobs:
           curl -k -sSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | awk '{print $0 "#" $0}' > ./tmp_data/05-cfip.txt || true
 
           # ==========================================
-          # 6. 数据清洗、去重并各自切片前 3 个合并
+          # 6. 数据清洗、去重并各自切片前 5 个合并
           # ==========================================
           for type_file in ./tmp_data/*.txt; do
             if [ -f "$type_file" ]; then
               # 1. 移除可能存在的空格和空行
               # 2. 通过 awk 对整行去重
-              # 3. 用 head -n 3 截取每个分类的前 3 条追加到 IP 文件
-              sed 's/[[:space:]]//g' "$type_file" | grep -v '^$' | awk '!a[$0]++' | head -n 3 >> IP || true
+              # 3. 用 head -n 5 截取每个分类的前 5 条追加到 IP 文件
+              sed 's/[[:space:]]//g' "$type_file" | grep -v '^$' | awk '!a[$0]++' | head -n 5 >> IP || true
             fi
           done
 
