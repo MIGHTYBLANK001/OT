@@ -5,44 +5,66 @@ set -e
 PORT=33322
 PASSWORD="fdsfasdasdasasdasda234565"
 SOCKS5_ADDR="127.0.0.1:7928"
+VERSION="v2.6.5"
+DIR="/opt/hysteria"
 # -----------------------------
 
+# 1. 自动识别架构
 ARCH=$(uname -m)
 case "$ARCH" in
-  x86_64|amd64) BIN_ARCH=amd64 ;;
-  aarch64|arm64) BIN_ARCH=arm64 ;;
+  x86_64|amd64) BIN_ARCH="amd64" ;;
+  aarch64|arm64) BIN_ARCH="arm64" ;;
   *) echo "❌ 不支持的架构: $ARCH"; exit 1 ;;
 esac
 
-# 清理旧进程
-pkill -f /opt/hysteria/daemon.sh 2>/dev/null || true
-pkill -f "/opt/hysteria/hysteria server" 2>/dev/null || true
+# 2. 停止旧 daemon 和 Hysteria
+echo "🧹 停止旧进程..."
+pkill -f "$DIR/daemon.sh" 2>/dev/null || true
+pkill -f "$DIR/hysteria server" 2>/dev/null || true
+sleep 2
 
-mkdir -p /opt/hysteria
+mkdir -p "$DIR"
 
-# 下载 Hysteria 2.6.5
-echo "⏳ 下载 Hysteria2..."
-curl -fL -o /opt/hysteria/hysteria \
-  "https://github.com/apernet/hysteria/releases/download/app/v2.6.5/hysteria-linux-${BIN_ARCH}"
-chmod +x /opt/hysteria/hysteria
+# 确认旧 Hysteria 已退出，避免 Text file busy
+if pgrep -f "$DIR/hysteria server" >/dev/null 2>&1; then
+    echo "⚠️ 强制停止旧 Hysteria..."
+    pkill -9 -f "$DIR/hysteria server" 2>/dev/null || true
+    sleep 1
+fi
 
-# 生成 TLS
+# 3. 下载 Hysteria2
+echo "⏳ 下载 Hysteria2 ${VERSION}..."
+
+URL="https://github.com/apernet/hysteria/releases/download/app/${VERSION}/hysteria-linux-${BIN_ARCH}"
+
+curl -fL --retry 3 -o "$DIR/hysteria.new" "$URL"
+
+chmod +x "$DIR/hysteria.new"
+
+# 原子替换，避免 Text file busy
+mv -f "$DIR/hysteria.new" "$DIR/hysteria"
+chmod +x "$DIR/hysteria"
+
+# 4. 生成 TLS 证书
 echo "🔑 生成 TLS 证书..."
+
 openssl req -x509 -nodes -newkey ec \
   -pkeyopt ec_paramgen_curve:prime256v1 \
   -days 3650 \
-  -keyout /opt/hysteria/key.pem \
-  -out /opt/hysteria/cert.pem \
-  -subj "/CN=www.bing.com"
+  -keyout "$DIR/key.pem" \
+  -out "$DIR/cert.pem" \
+  -subj "/CN=www.bing.com" \
+  >/dev/null 2>&1
 
-# 写入配置
+# 5. 写入 Hysteria 配置
 echo "📄 写入配置..."
-cat > /opt/hysteria/server.yaml <<EOF
+
+cat > "$DIR/server.yaml" <<EOF
 listen: ":${PORT}"
 
 tls:
-  cert: "/opt/hysteria/cert.pem"
-  key: "/opt/hysteria/key.pem"
+  cert: "${DIR}/cert.pem"
+  key: "${DIR}/key.pem"
   alpn:
     - "h3"
 
@@ -60,46 +82,74 @@ bandwidth:
   down: "200mbps"
 EOF
 
-# 配置守护
-cat > /opt/hysteria/daemon.sh <<'EOF'
+# 6. 写入轻量 daemon
+echo "⚙️ 配置后台守护..."
+
+cat > "$DIR/daemon.sh" <<'EOF'
 #!/bin/sh
+
 while true; do
-    if ! pgrep -f "/opt/hysteria/hysteria server" >/dev/null; then
-        /opt/hysteria/hysteria server -c /opt/hysteria/server.yaml \
+    if ! pgrep -f "/opt/hysteria/hysteria server" >/dev/null 2>&1; then
+        /opt/hysteria/hysteria server \
+          -c /opt/hysteria/server.yaml \
           >> /opt/hysteria/hysteria.log 2>&1 &
     fi
     sleep 10
 done
 EOF
-chmod +x /opt/hysteria/daemon.sh
 
-# LXC 开机启动
+chmod +x "$DIR/daemon.sh"
+
+# 7. LXC 开机启动
+echo "🚀 配置开机启动..."
+
 if [ ! -f /etc/rc.local ]; then
     printf '#!/bin/sh -e\nexit 0\n' > /etc/rc.local
 fi
+
 chmod +x /etc/rc.local
 
-sed -i '\|/opt/hysteria/daemon.sh|d' /etc/rc.local
-sed -i '/exit 0/i /opt/hysteria/daemon.sh &' /etc/rc.local
+# 删除旧启动项，避免重复
+sed -i "\|$DIR/daemon.sh|d" /etc/rc.local
 
-# 启动
-nohup /opt/hysteria/daemon.sh >/dev/null 2>&1 &
+# 添加到 exit 0 前
+sed -i "/^exit 0/i $DIR/daemon.sh &" /etc/rc.local
 
-sleep 2
+# 8. 启动 daemon
+echo "🚀 启动 Hysteria2..."
 
-# 检查
-if pgrep -f "/opt/hysteria/hysteria server" >/dev/null; then
+nohup "$DIR/daemon.sh" >/dev/null 2>&1 &
+
+sleep 3
+
+# 9. 检查服务
+if pgrep -f "$DIR/hysteria server" >/dev/null 2>&1; then
+
     IP=$(curl -4 -s --max-time 5 https://api.ipify.org || echo "YOUR_SERVER_IP")
 
+    echo
     echo "=================================================================="
-    echo "🎉 Hysteria2 部署成功"
+    echo "🎉 Hysteria2 ${VERSION} 部署成功"
+    echo "=================================================================="
+    echo
+    echo "监听端口: ${PORT}/UDP"
+    echo "SOCKS5:    ${SOCKS5_ADDR}"
+    echo "日志:      ${DIR}/hysteria.log"
+    echo
+    echo "客户端节点:"
     echo
     echo "hysteria2://${PASSWORD}@${IP}:${PORT}?sni=www.bing.com&alpn=h3&insecure=1#LXC-Hy2-Chain"
     echo
-    echo "日志: /opt/hysteria/hysteria.log"
     echo "=================================================================="
+
 else
-    echo "❌ Hysteria 启动失败:"
-    cat /opt/hysteria/hysteria.log 2>/dev/null || true
+
+    echo
+    echo "❌ Hysteria2 启动失败"
+    echo
+    echo "========== 日志 =========="
+    cat "$DIR/hysteria.log" 2>/dev/null || true
+    echo "=========================="
     exit 1
+
 fi
