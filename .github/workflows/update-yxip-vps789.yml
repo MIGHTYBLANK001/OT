@@ -3,7 +3,8 @@ name: Fetch and Merge VPS789 CF IPs & Domains
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 3 * * *' 
+    - cron: '0 3 * * *'
+      timezone: "Asia/Shanghai" 
 
 permissions:
   contents: write
