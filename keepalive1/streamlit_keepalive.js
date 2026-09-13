@@ -84,10 +84,21 @@ function ensurePlaywright() {
   }
 
   log('未检测到 playwright,安装到脚本自身目录(仅首次运行需要,跳过下载自带浏览器,不碰青龙根目录依赖)...');
-  execSync(`npm install --no-save --legacy-peer-deps --prefix "${SCRIPT_DIR}" playwright`, {
+  const installEnv = { ...process.env, PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1' };
+  const baseCmd = `npm install --no-save --legacy-peer-deps --prefix "${SCRIPT_DIR}" playwright`;
+
+  try {
+    execSync(baseCmd, { stdio: 'inherit', cwd: SCRIPT_DIR, env: installEnv });
+    return;
+  } catch (e) {
+    log('默认 npm 源安装失败(可能是网络问题),改用国内镜像源重试...');
+  }
+
+  const registry = process.env.NPM_REGISTRY || 'https://registry.npmmirror.com';
+  execSync(`${baseCmd} --registry=${registry}`, {
     stdio: 'inherit',
     cwd: SCRIPT_DIR,
-    env: { ...process.env, PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1' },
+    env: installEnv,
   });
 }
 
