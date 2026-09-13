@@ -40,6 +40,15 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+process.on('uncaughtException', (e) => {
+  console.log(`[未捕获异常] ${e && e.stack ? e.stack : e}`);
+  process.exit(1);
+});
+process.on('unhandledRejection', (e) => {
+  console.log(`[未处理的Promise拒绝] ${e && e.stack ? e.stack : e}`);
+  process.exit(1);
+});
+
 function which(bin) {
   try {
     const out = execSync(`command -v ${bin} 2>/dev/null`, { encoding: 'utf8' }).trim();
@@ -148,16 +157,34 @@ async function runOnce(chromiumPath) {
       '--disable-background-networking',
       '--disable-sync',
       '--disable-default-apps',
+      '--single-process',
+      '--no-zygote',
+      '--renderer-process-limit=1',
+      '--disable-features=site-per-process,TranslateUI',
+      '--blink-settings=imagesEnabled=false',
       '--js-flags=--max-old-space-size=128',
     ],
   });
+  log('chromium 已启动');
 
   try {
-    const context = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+    const context = await browser.newContext({ viewport: { width: 800, height: 600 } });
     const page = await context.newPage();
     page.setDefaultTimeout(NAV_TIMEOUT_MS);
 
+    // 保活只需要看到文字和按钮,禁掉图片/字体/媒体加载省内存
+    await page.route('**/*', (route) => {
+      const type = route.request().resourceType();
+      if (type === 'image' || type === 'font' || type === 'media') {
+        route.abort();
+      } else {
+        route.continue();
+      }
+    });
+
+    log('开始加载目标页面...');
     await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+    log('页面已加载,等待渲染关键元素...');
     await page.waitForTimeout(4000); // 留时间给页面渲染出关键元素
 
     const wakeButton = page.getByRole('button', { name: 'Yes, get this app back up!' });
@@ -201,8 +228,10 @@ async function runOnce(chromiumPath) {
 }
 
 async function main() {
+  log('== 开始执行保活流程 ==');
   ensurePlaywright();
   const chromiumPath = ensureChromium();
+  log(`chromium 路径: ${chromiumPath}`);
 
   let lastErr = null;
   for (let attempt = 1; attempt <= MAX_RETRY + 1; attempt++) {
