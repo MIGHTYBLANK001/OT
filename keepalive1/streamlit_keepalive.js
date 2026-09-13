@@ -194,12 +194,25 @@ async function runOnce(chromiumPath) {
     log('页面已加载,等待渲染关键元素...');
     await page.waitForTimeout(4000); // 留时间给页面渲染出关键元素
 
-    const wakeButton = page.getByRole('button', { name: 'Yes, get this app back up!' });
-    const appContainer = page.locator("[data-testid='stAppViewContainer']");
+    // 不依赖用户自己应用的 DOM 结构(每个 app 长得不一样,选择器猜不准)。
+    // 只判断 Streamlit 官方统一的休眠页文案在不在——这个文案跨版本、跨 app 基本不变,
+    // 比猜"唤醒后应该长什么样"稳得多:文案消失了就等于醒了。
+    async function isSleeping() {
+      const bodyText = await page.locator('body').innerText().catch(() => '');
+      return /gone to sleep|get this app back up|Zzz{2,}/i.test(bodyText);
+    }
 
-    if ((await wakeButton.count()) > 0) {
-      result.detail = '检测到休眠页,已点击唤醒按钮';
-      await wakeButton.first().click();
+    const sleepingNow = await isSleeping();
+
+    if (sleepingNow) {
+      result.detail = '检测到休眠页';
+      const wakeButton = page.getByRole('button', { name: /get this app back up/i });
+      if ((await wakeButton.count()) > 0) {
+        await wakeButton.first().click();
+        result.detail += ',已点击唤醒按钮';
+      } else {
+        result.detail += ',但没找到可点击的唤醒按钮,继续轮询等待';
+      }
 
       let waited = 0;
       let awake = false;
@@ -216,10 +229,7 @@ async function runOnce(chromiumPath) {
           }
         }
 
-        const stillSleeping = (await wakeButton.count()) > 0;
-        const hasAppContainer = (await appContainer.count()) > 0;
-        // 只要休眠按钮消失了,或者明确看到应用容器,就判定已醒
-        if (hasAppContainer || !stillSleeping) {
+        if (!(await isSleeping())) {
           awake = true;
           break;
         }
@@ -227,17 +237,14 @@ async function runOnce(chromiumPath) {
 
       if (awake) {
         result.status = '唤醒成功';
-        result.detail += `,等待 ${waited}s 后应用已启动`;
+        result.detail += `,等待 ${waited}s 后休眠文案已消失,判定应用已启动`;
       } else {
         result.status = '唤醒超时';
-        result.detail += `,等待 ${waited}s 后应用仍未渲染出主体(可能仍在冷启动)`;
+        result.detail += `,等待 ${waited}s 后仍能看到休眠文案(可能仍在冷启动)`;
       }
-    } else if ((await appContainer.count()) > 0) {
-      result.status = '本来就是活的';
-      result.detail = '访问时应用已在运行,无需唤醒';
     } else {
-      result.status = '状态未知';
-      result.detail = '未检测到休眠按钮也未检测到应用主体,页面结构可能变化,建议人工检查一次';
+      result.status = '本来就是活的';
+      result.detail = '访问时未检测到休眠文案,应用已在运行,无需唤醒';
     }
   } finally {
     await browser.close();
