@@ -27,10 +27,11 @@ const DEFAULT_URL = 'https://l2uetmksgajvryi4qmegvn.streamlit.app/';
 const TARGET_URL = process.env.STREAMLIT_URL || DEFAULT_URL;
 
 const NAV_TIMEOUT_MS = 60_000;        // 首次打开页面的超时
-const WAKE_WAIT_TIMEOUT_S = 240;      // 点击唤醒后最多等待冷启动(4分钟)
+const WAKE_WAIT_TIMEOUT_S = 300;      // 点击唤醒后最多等待冷启动(5分钟)
 const POLL_INTERVAL_S = 5;
+const RELOAD_EVERY_S = 30;            // 每隔多久主动刷新一次页面重新检测
 const MAX_RETRY = 1;
-const OVERALL_TIMEOUT_MS = 6 * 60 * 1000; // 整体执行硬上限(6分钟),防止任何环节卡死没日志
+const OVERALL_TIMEOUT_MS = 8 * 60 * 1000; // 整体执行硬上限(8分钟),防止任何环节卡死没日志
 
 function withTimeout(promise, ms, message) {
   let timer;
@@ -132,14 +133,15 @@ function notify(title, content) {
       const mod = require(p);
       const fn = typeof mod === 'function' ? mod : mod.sendNotify;
       if (typeof fn === 'function') {
-        fn(title, content);
-        return;
+        // 通知函数内部往往是异步发 HTTP 请求,这里包成 Promise 让调用方能等它真正完成
+        return Promise.resolve(fn(title, content));
       }
     } catch {
       // 继续尝试下一个候选路径
     }
   }
   log(`[通知发送失败,仅打印日志]\n标题: ${title}\n内容: ${content}`);
+  return Promise.resolve();
 }
 
 async function runOnce(chromiumPath) {
@@ -204,7 +206,20 @@ async function runOnce(chromiumPath) {
       while (waited < WAKE_WAIT_TIMEOUT_S) {
         await sleep(POLL_INTERVAL_S * 1000);
         waited += POLL_INTERVAL_S;
-        if ((await appContainer.count()) > 0) {
+
+        // 唤醒过程中页面有时不会自动更新,定期主动刷新重新检测
+        if (waited % RELOAD_EVERY_S === 0) {
+          try {
+            await page.reload({ waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+          } catch (e) {
+            log(`第 ${waited}s 刷新页面失败,继续轮询: ${e.message}`);
+          }
+        }
+
+        const stillSleeping = (await wakeButton.count()) > 0;
+        const hasAppContainer = (await appContainer.count()) > 0;
+        // 只要休眠按钮消失了,或者明确看到应用容器,就判定已醒
+        if (hasAppContainer || !stillSleeping) {
           awake = true;
           break;
         }
@@ -281,6 +296,10 @@ async function main() {
     `详情: ${r.detail}`;
 
   console.log(content);
-  notify(title, content);
+  try {
+    await withTimeout(notify(title, content), 15000, '通知发送超时(超过15秒),已跳过等待');
+  } catch (e) {
+    log(`[通知等待失败] ${e.message}`);
+  }
   process.exit(0);
 })();
