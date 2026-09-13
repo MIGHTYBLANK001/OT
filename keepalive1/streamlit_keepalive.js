@@ -30,6 +30,15 @@ const NAV_TIMEOUT_MS = 60_000;        // 首次打开页面的超时
 const WAKE_WAIT_TIMEOUT_S = 240;      // 点击唤醒后最多等待冷启动(4分钟)
 const POLL_INTERVAL_S = 5;
 const MAX_RETRY = 1;
+const OVERALL_TIMEOUT_MS = 6 * 60 * 1000; // 整体执行硬上限(6分钟),防止任何环节卡死没日志
+
+function withTimeout(promise, ms, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 function log(msg) {
   const t = new Date().toTimeString().slice(0, 8);
@@ -157,10 +166,6 @@ async function runOnce(chromiumPath) {
       '--disable-background-networking',
       '--disable-sync',
       '--disable-default-apps',
-      '--single-process',
-      '--no-zygote',
-      '--renderer-process-limit=1',
-      '--disable-features=site-per-process,TranslateUI',
       '--blink-settings=imagesEnabled=false',
       '--js-flags=--max-old-space-size=128',
     ],
@@ -256,7 +261,7 @@ async function main() {
 (async () => {
   let r;
   try {
-    r = await main();
+    r = await withTimeout(main(), OVERALL_TIMEOUT_MS, '整体执行超时(超过6分钟),可能是浏览器卡死,已强制中止');
   } catch (e) {
     r = {
       url: TARGET_URL,
@@ -277,4 +282,5 @@ async function main() {
 
   console.log(content);
   notify(title, content);
+  process.exit(0);
 })();
