@@ -31,7 +31,7 @@ const WAKE_WAIT_TIMEOUT_S = 300;      // 点击唤醒后最多等待冷启动(5�
 const POLL_INTERVAL_S = 5;
 const RELOAD_EVERY_S = 30;            // 每隔多久主动刷新一次页面重新检测
 const MAX_RETRY = 1;
-const OVERALL_TIMEOUT_MS = 8 * 60 * 1000; // 整体执行硬上限(8分钟),防止任何环节卡死没日志
+const OVERALL_TIMEOUT_MS = 9 * 60 * 1000; // 整体执行硬上限(9分钟),防止任何环节卡死没日志
 
 function withTimeout(promise, ms, message) {
   let timer;
@@ -153,7 +153,7 @@ async function runOnce(chromiumPath) {
     start_time: startTs.toLocaleString('zh-CN', { hour12: false }),
     status: '未知',
     detail: '',
-    duration_s: 10,
+    duration_s: 0,
   };
 
   const browser = await chromium.launch({
@@ -192,7 +192,7 @@ async function runOnce(chromiumPath) {
     log('开始加载目标页面...');
     await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
     log('页面已加载,等待渲染关键元素...');
-    await page.waitForTimeout(10000); // 留时间给页面渲染出关键元素
+    await page.waitForTimeout(4000); // 留时间给页面渲染出关键元素
 
     // 不依赖用户自己应用的 DOM 结构(每个 app 长得不一样,选择器猜不准)。
     // 只判断 Streamlit 官方统一的休眠页文案在不在——这个文案跨版本、跨 app 基本不变,
@@ -246,6 +246,9 @@ async function runOnce(chromiumPath) {
       result.status = '本来就是活的';
       result.detail = '访问时未检测到休眠文案,应用已在运行,无需唤醒';
     }
+
+    log('页面状态已判定,继续停留 60 秒让应用完成加载/保持连接...');
+    await page.waitForTimeout(60_000);
   } finally {
     await browser.close();
   }
@@ -267,7 +270,7 @@ async function main() {
     } catch (e) {
       lastErr = e;
       log(`[第 ${attempt} 次尝试失败] ${e.message}`);
-      await sleep(30000);
+      await sleep(3000);
     }
   }
 
