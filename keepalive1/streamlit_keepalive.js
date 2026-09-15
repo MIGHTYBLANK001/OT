@@ -153,7 +153,7 @@ async function runOnce(chromiumPath) {
     start_time: startTs.toLocaleString('zh-CN', { hour12: false }),
     status: '未知',
     detail: '',
-    duration_s: 0,
+    duration_s: 10,
   };
 
   const browser = await chromium.launch({
@@ -192,7 +192,7 @@ async function runOnce(chromiumPath) {
     log('开始加载目标页面...');
     await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
     log('页面已加载,等待渲染关键元素...');
-    await page.waitForTimeout(4000); // 留时间给页面渲染出关键元素
+    await page.waitForTimeout(10000); // 留时间给页面渲染出关键元素
 
     // 不依赖用户自己应用的 DOM 结构(每个 app 长得不一样,选择器猜不准)。
     // 只判断 Streamlit 官方统一的休眠页文案在不在——这个文案跨版本、跨 app 基本不变,
@@ -267,7 +267,7 @@ async function main() {
     } catch (e) {
       lastErr = e;
       log(`[第 ${attempt} 次尝试失败] ${e.message}`);
-      await sleep(3000);
+      await sleep(30000);
     }
   }
 
