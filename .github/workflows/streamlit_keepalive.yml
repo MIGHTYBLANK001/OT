@@ -16,8 +16,7 @@ jobs:
 
     steps:
       - name: Install Playwright
-        run: |
-          npm install --no-save playwright@1.63.0
+        run: npm install --no-save playwright@1.63.0
 
       - name: Keep Streamlit Alive
         env:
@@ -48,7 +47,7 @@ jobs:
 
             const page = await context.newPage();
 
-            // Reduce unnecessary traffic.
+            // Block unnecessary resources.
             await page.route('**/*', async route => {
               const type = route.request().resourceType();
 
@@ -73,7 +72,7 @@ jobs:
 
               console.log(`Title: ${await page.title()}`);
 
-              // Wait for Streamlit frontend initialization.
+              // Allow Streamlit frontend to initialize.
               await page.waitForTimeout(5000);
 
               const wakeButton = page.getByText(
@@ -91,24 +90,27 @@ jobs:
                 await wakeButton.first().click();
 
                 console.log('Wake button clicked.');
-
-                // Wait for cold start.
-                await page.waitForTimeout(60000);
-
-                console.log('Cold start wait completed.');
               } else {
                 console.log(
                   'Wake button not found. Streamlit may already be running.'
                 );
               }
 
+              // Always keep the browser connected for 60 seconds.
+              console.log('Keeping connection alive for 60 seconds...');
+
+              await page.waitForTimeout(60000);
+
+              console.log('60 second keepalive completed.');
+
               console.log(`Final URL: ${page.url()}`);
-              console.log('Streamlit Keepalive completed.');
 
             } finally {
               await context.close().catch(() => {});
               await browser.close().catch(() => {});
             }
+
+            console.log('Streamlit Keepalive completed.');
           }
 
           main().catch(error => {
