@@ -16,13 +16,14 @@ jobs:
 
     steps:
       - name: Install Playwright
-        run: npm install --no-save playwright@1.63.0
+        run: |
+          npm install --no-save playwright@1.63.0
 
       - name: Keep Streamlit Alive
         env:
           STREAMLIT_URL: "https://l2uetmksgajvryi4qmegvn.streamlit.app/"
         run: |
-          cat > /tmp/keepalive.js <<'EOF'
+          cat > keepalive.js <<'EOF'
           const { chromium } = require('playwright');
 
           async function main() {
@@ -47,6 +48,7 @@ jobs:
 
             const page = await context.newPage();
 
+            // Reduce unnecessary traffic.
             await page.route('**/*', async route => {
               const type = route.request().resourceType();
 
@@ -71,6 +73,7 @@ jobs:
 
               console.log(`Title: ${await page.title()}`);
 
+              // Wait for Streamlit frontend initialization.
               await page.waitForTimeout(5000);
 
               const wakeButton = page.getByText(
@@ -89,15 +92,18 @@ jobs:
 
                 console.log('Wake button clicked.');
 
+                // Wait for cold start.
                 await page.waitForTimeout(60000);
 
-                console.log('Streamlit wake-up wait completed.');
+                console.log('Cold start wait completed.');
               } else {
-                console.log('Streamlit is already running.');
+                console.log(
+                  'Wake button not found. Streamlit may already be running.'
+                );
               }
 
               console.log(`Final URL: ${page.url()}`);
-              console.log('Keepalive completed.');
+              console.log('Streamlit Keepalive completed.');
 
             } finally {
               await context.close().catch(() => {});
@@ -106,9 +112,10 @@ jobs:
           }
 
           main().catch(error => {
+            console.error('Keepalive failed:');
             console.error(error);
             process.exit(1);
           });
           EOF
 
-          node /tmp/keepalive.js
+          node keepalive.js
