@@ -2,16 +2,13 @@ name: Streamlit Keepalive
 
 on:
   schedule:
-    - cron: "0 */4 * * *"
-
-  # 支持手动运行
+    - cron: "0 */3 * * *"
   workflow_dispatch:
 
 jobs:
   keepalive:
     runs-on: ubuntu-latest
 
-    # 使用 Playwright 官方 Docker 镜像
     container:
       image: mcr.microsoft.com/playwright:v1.63.0-noble
       options: --ipc=host
@@ -19,6 +16,10 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Install Playwright package
+        run: |
+          npm install --no-save playwright@1.63.0
+
       - name: Wake Streamlit
         env:
           STREAMLIT_URL: https://l2uetmksgajvryi4qmegvn.streamlit.app/
@@ -26,93 +27,102 @@ jobs:
           node <<'EOF'
           const { chromium } = require('playwright');
 
-          const url = process.env.STREAMLIT_URL;
+          (async () => {
+            const url = process.env.STREAMLIT_URL;
 
-          if (!url) {
-            throw new Error('STREAMLIT_URL 未设置');
-          }
-
-          console.log(`访问 Streamlit: ${url}`);
-
-          const browser = await chromium.launch({
-            headless: true
-          });
-
-          const context = await browser.newContext({
-            viewport: {
-              width: 1280,
-              height: 720
+            if (!url) {
+              throw new Error('STREAMLIT_URL is not set');
             }
-          });
 
-          const page = await context.newPage();
+            console.log(`Opening: ${url}`);
 
-          // 屏蔽不影响唤醒的资源，减少流量和运行时间
-          await page.route('**/*', async route => {
-            const type = route.request().resourceType();
-
-            if (
-              type === 'image' ||
-              type === 'font' ||
-              type === 'media'
-            ) {
-              await route.abort();
-            } else {
-              await route.continue();
-            }
-          });
-
-          try {
-            console.log('正在打开页面...');
-
-            await page.goto(url, {
-              waitUntil: 'domcontentloaded',
-              timeout: 120000
+            const browser = await chromium.launch({
+              headless: true
             });
 
-            console.log(`页面标题: ${await page.title()}`);
+            const context = await browser.newContext({
+              viewport: {
+                width: 1280,
+                height: 720
+              }
+            });
 
-            // 等待 Streamlit 页面初始化
-            await page.waitForTimeout(5000);
+            const page = await context.newPage();
 
-            // Streamlit 休眠页面的唤醒按钮
-            const wakeButton = page.getByText(
-              'Yes, get this app back up!',
-              { exact: false }
-            );
+            // Reduce unnecessary traffic.
+            await page.route('**/*', async route => {
+              const type = route.request().resourceType();
 
-            const count = await wakeButton.count();
+              if (
+                type === 'image' ||
+                type === 'font' ||
+                type === 'media'
+              ) {
+                await route.abort();
+              } else {
+                await route.continue();
+              }
+            });
 
-            console.log(`检测到唤醒按钮数量: ${count}`);
+            try {
+              console.log('Loading Streamlit...');
 
-            if (count > 0) {
-              console.log('Streamlit 当前处于休眠状态');
+              await page.goto(url, {
+                waitUntil: 'domcontentloaded',
+                timeout: 120000
+              });
 
-              await wakeButton.first().click();
+              console.log(`Title: ${await page.title()}`);
 
-              console.log('已点击唤醒按钮');
+              // Allow Streamlit frontend to initialize.
+              await page.waitForTimeout(5000);
 
-              // 等待 Streamlit 完成冷启动
-              await page.waitForTimeout(60000);
+              const wakeButton = page.getByText(
+                'Yes, get this app back up!',
+                { exact: false }
+              );
 
-              console.log('已等待 60 秒，检查页面状态...');
-            } else {
-              console.log('未检测到唤醒按钮，应用可能已经运行');
+              const count = await wakeButton.count();
+
+              console.log(`Wake button count: ${count}`);
+
+              if (count > 0) {
+                console.log('Streamlit is sleeping.');
+
+                await wakeButton.first().click();
+
+                console.log('Wake button clicked.');
+
+                // Wait for cold start.
+                await page.waitForTimeout(60000);
+
+                console.log('Cold start wait completed.');
+              } else {
+                console.log(
+                  'Wake button not found. Streamlit may already be running.'
+                );
+              }
+
+              console.log(`Final URL: ${page.url()}`);
+
+              const bodyText = await page
+                .locator('body')
+                .innerText({ timeout: 30000 })
+                .catch(() => '');
+
+              console.log(`Page text length: ${bodyText.length}`);
+
+              console.log('Streamlit Keepalive completed.');
+
+            } catch (error) {
+              console.error('Keepalive failed:');
+              console.error(error);
+              process.exitCode = 1;
+
+            } finally {
+              await context.close().catch(() => {});
+              await browser.close().catch(() => {});
             }
-
-            console.log(`最终 URL: ${page.url()}`);
-
-            const bodyText = await page.locator('body')
-              .innerText({ timeout: 30000 })
-              .catch(() => '');
-
-            console.log(`页面文本长度: ${bodyText.length}`);
-
-            console.log('Streamlit Keepalive 完成');
-
-          } finally {
-            await context.close().catch(() => {});
-            await browser.close().catch(() => {});
-          }
+          })();
           EOF
 ```
