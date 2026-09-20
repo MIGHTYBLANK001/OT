@@ -2,8 +2,7 @@ name: Streamlit Keepalive
 
 on:
   schedule:
-    # 每 3 小时运行一次
-    - cron: "0 */3 * * *"
+    - cron: "0 */4 * * *"
 
   # 支持手动运行
   workflow_dispatch:
