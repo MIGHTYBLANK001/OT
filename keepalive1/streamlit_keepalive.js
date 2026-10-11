@@ -559,4 +559,3 @@ entry().catch(error => {
   stopChildren();
   process.exitCode = 1;
 });
-```
