@@ -427,4 +427,3 @@ process.on('SIGINT', () => {
 });
 
 main();
-```
