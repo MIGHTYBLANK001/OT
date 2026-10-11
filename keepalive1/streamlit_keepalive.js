@@ -8,9 +8,9 @@ const { spawn } = require('child_process');
 const CONFIG = {
   url: process.env.STREAMLIT_URL ||
     'https://l2uetmksgajvryi4qmegvn.streamlit.app/',
-  installTimeout: 5 * 60 * 1000,
-  totalTimeout: 10 * 60 * 1000,
-  wakeTimeout: 5 * 60 * 1000,
+  installTimeout: 8 * 60 * 1000,
+  totalTimeout: 12 * 60 * 1000,
+  wakeTimeout: 4 * 60 * 1000,
   pollInterval: 5000,
   holdTime: 60000,
   reloadInterval: 30000
