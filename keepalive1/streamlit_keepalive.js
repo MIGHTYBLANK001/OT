@@ -1,561 +1,430 @@
-/*
- * streamlit_keepalive.js
- * Streamlit Cloud 保活脚本
- * Node.js 20+ | Alpine | Debian | Ubuntu | 青龙面板
- *
- * 环境变量：
- * STREAMLIT_URL       目标地址
- * CHROMIUM_PATH       指定浏览器路径（可选）
- * PLAYWRIGHT_PATH     指定 Playwright 模块路径（可选）
- * KEEPALIVE_WAIT      唤醒等待秒数，默认 300
- * KEEPALIVE_HOLD      成功检测后的停留秒数，默认 30
- * KEEPALIVE_TIMEOUT   总超时秒数，默认 540
- *
- * 依赖：系统 Chromium + npm 包 playwright
- * 不主动加载青龙 sendNotify.js，避免通知依赖影响主流程。
- */
-
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { spawn, spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 
-const ROOT = __dirname;
-const URL = process.env.STREAMLIT_URL ||
-  'https://l2uetmksgajvryi4qmegvn.streamlit.app/';
+const CONFIG = {
+  url: process.env.STREAMLIT_URL ||
+    'https://l2uetmksgajvryi4qmegvn.streamlit.app/',
+  installTimeout: 5 * 60 * 1000,
+  totalTimeout: 10 * 60 * 1000,
+  wakeTimeout: 5 * 60 * 1000,
+  pollInterval: 5000,
+  holdTime: 60000,
+  reloadInterval: 30000
+};
 
-const NAV_TIMEOUT = 60000;
-const WAKE_WAIT = numberEnv('KEEPALIVE_WAIT', 300, 30, 600);
-const HOLD_SECONDS = numberEnv('KEEPALIVE_HOLD', 30, 0, 120);
-const TOTAL_TIMEOUT = numberEnv('KEEPALIVE_TIMEOUT', 540, 60, 900);
-const POLL_SECONDS = 5;
-const RELOAD_SECONDS = 30;
-const MAX_RETRIES = 2;
-
-let browserInstance = null;
-let childProcesses = new Set();
-let stopping = false;
-
-function numberEnv(name, fallback, min, max) {
-  const value = Number(process.env[name]);
-  return Number.isFinite(value) && value >= min && value <= max
-    ? Math.floor(value)
-    : fallback;
-}
+const BASE = __dirname;
+const children = new Set();
+let browser = null;
+let finished = false;
 
 function log(message) {
-  console.log(`[${new Date().toISOString()}] ${message}`);
+  console.log(`[${new Date().toLocaleString()}] ${message}`);
 }
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function fileExists(file) {
+function exists(file) {
   try {
-    return fs.statSync(file).isFile();
+    fs.accessSync(file, fs.constants.X_OK);
+    return true;
   } catch (_) {
     return false;
   }
 }
 
-function commandPath(command) {
-  const result = spawnSync(
-    'sh',
-    ['-c', 'command -v "$1"', 'sh', command],
-    { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }
-  );
-
-  return result.status === 0 ? result.stdout.trim() : '';
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function run(command, args, timeoutMs = 120000) {
+function run(command, args = [], timeout = CONFIG.installTimeout) {
   return new Promise((resolve, reject) => {
-    log(`执行命令：${command} ${args.join(' ')}`);
+    log(`执行：${command} ${args.join(' ')}`);
 
-    const child = spawn(command, args, {
-      stdio: 'inherit',
-      env: process.env,
-    });
+    let child;
+    let output = '';
 
-    childProcesses.add(child);
+    try {
+      child = spawn(command, args, {
+        cwd: BASE,
+        env: process.env,
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+    } catch (error) {
+      reject(error);
+      return;
+    }
 
-    let settled = false;
+    children.add(child);
+
     const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
+      output += '\n命令执行超时';
       child.kill('SIGTERM');
 
-      setTimeout(() => {
-        if (child.exitCode === null) child.kill('SIGKILL');
-      }, 2000).unref();
+      const killTimer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch (_) {}
+      }, 3000);
 
-      reject(new Error(`命令执行超时：${command}`));
-    }, timeoutMs);
+      killTimer.unref();
+    }, timeout);
 
-    child.once('error', error => {
-      if (settled) return;
-      settled = true;
+    child.stdout.on('data', data => {
+      const text = data.toString();
+      output += text;
+      if (output.length > 12000) output = output.slice(-12000);
+      process.stdout.write(text);
+    });
+
+    child.stderr.on('data', data => {
+      const text = data.toString();
+      output += text;
+      if (output.length > 12000) output = output.slice(-12000);
+      process.stderr.write(text);
+    });
+
+    child.on('error', error => {
       clearTimeout(timer);
-      childProcesses.delete(child);
+      children.delete(child);
       reject(error);
     });
 
-    child.once('close', code => {
-      childProcesses.delete(child);
+    child.on('close', code => {
       clearTimeout(timer);
+      children.delete(child);
 
-      if (settled) return;
-      settled = true;
-
-      if (code === 0) resolve();
-      else reject(new Error(`${command} 退出，代码 ${code}`));
+      if (output.includes('命令执行超时')) {
+        reject(new Error(`命令执行超时：${command}`));
+      } else if (code === 0) {
+        resolve(output);
+      } else {
+        reject(new Error(
+          `${command} 退出码 ${code}\n${output.slice(-3000)}`
+        ));
+      }
     });
   });
 }
 
-function detectOS() {
-  let id = '';
-  let like = '';
-
-  try {
-    const text = fs.readFileSync('/etc/os-release', 'utf8');
-
-    for (const line of text.split(/\r?\n/)) {
-      const match = line.match(/^(ID|ID_LIKE)=(.*)$/);
-      if (!match) continue;
-
-      const value = match[2].replace(/^["']|["']$/g, '').toLowerCase();
-      if (match[1] === 'ID') id = value;
-      else like = value;
-    }
-  } catch (_) {}
-
-  if (id === 'alpine' || commandPath('apk')) return 'alpine';
-  if (['debian', 'ubuntu'].includes(id) || commandPath('apt-get')) {
-    return 'debian';
-  }
-
-  if (/\b(debian|ubuntu)\b/.test(like)) return 'debian';
-  return 'unknown';
-}
-
 function findChromium() {
-  if (process.env.CHROMIUM_PATH) {
-    if (!fileExists(process.env.CHROMIUM_PATH)) {
-      throw new Error(`CHROMIUM_PATH 不存在：${process.env.CHROMIUM_PATH}`);
-    }
-    return process.env.CHROMIUM_PATH;
-  }
-
-  for (const name of [
-    'chromium',
-    'chromium-browser',
-    'google-chrome',
-    'google-chrome-stable',
-  ]) {
-    const p = commandPath(name);
-    if (p) return p;
-  }
-
-  for (const p of [
+  const candidates = [
+    process.env.CHROMIUM_PATH,
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
     '/usr/bin/google-chrome',
     '/usr/bin/google-chrome-stable',
-    '/usr/bin/chromium/chromium',
-  ]) {
-    if (fileExists(p)) return p;
-  }
-
-  return '';
-}
-
-function findPlaywright() {
-  const candidates = [
-    process.env.PLAYWRIGHT_PATH,
-    path.join(ROOT, 'node_modules', 'playwright'),
-    '/ql/data/scripts/node_modules/playwright',
-    '/ql/data/dep_cache/node/global/5/node_modules/playwright',
-    '/ql/data/dep_cache/node/global/5/.pnpm/node_modules/playwright',
+    '/usr/lib/chromium/chromium',
+    '/usr/lib/chromium-browser/chromium-browser'
   ].filter(Boolean);
 
-  for (const candidate of candidates) {
-    try {
-      const resolved = require.resolve(candidate);
-      return require(resolved);
-    } catch (_) {}
-
-    try {
-      const packageJson = path.join(candidate, 'package.json');
-      if (fileExists(packageJson)) return require(candidate);
-    } catch (_) {}
+  for (const file of candidates) {
+    if (exists(file)) return file;
   }
-
-  try {
-    return require('playwright');
-  } catch (_) {}
-
-  try {
-    const npmRoot = commandPath('npm');
-    if (npmRoot) {
-      const result = spawnSync('npm', ['root', '-g'], {
-        encoding: 'utf8',
-        timeout: 5000,
-      });
-
-      if (result.status === 0) {
-        const modulePath = path.join(result.stdout.trim(), 'playwright');
-        if (fileExists(path.join(modulePath, 'package.json'))) {
-          return require(modulePath);
-        }
-      }
-    }
-  } catch (_) {}
 
   return null;
 }
 
+function loadPlaywright() {
+  const candidates = [
+    path.join(BASE, 'node_modules', 'playwright'),
+    path.join(BASE, 'node_modules', 'playwright-core'),
+    process.env.PLAYWRIGHT_PATH || ''
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      return require(candidate);
+    } catch (_) {}
+  }
+
+  return null;
+}
+
+async function installChromium() {
+  if (findChromium()) {
+    log('已检测到系统 Chromium，跳过安装');
+    return;
+  }
+
+  const alpine = fs.existsSync('/etc/alpine-release');
+  const debian = fs.existsSync('/etc/debian_version');
+
+  if (typeof process.getuid === 'function' && process.getuid() !== 0) {
+    throw new Error('安装 Chromium 需要 root 权限，请以 root 运行青龙容器');
+  }
+
+  if (alpine) {
+    log('Alpine 系统：安装 Chromium，最多等待 5 分钟');
+    await run('apk', ['add', '--no-cache', 'chromium']);
+  } else if (debian) {
+    log('Debian 系统：安装 Chromium，最多等待 5 分钟');
+    await run('sh', [
+      '-c',
+      'export DEBIAN_FRONTEND=noninteractive; ' +
+      'apt-get update -y && ' +
+      '(apt-get install -y chromium || ' +
+      'apt-get install -y chromium-browser)'
+    ]);
+  } else {
+    throw new Error('暂不支持此系统：仅支持 Alpine 和 Debian 系');
+  }
+
+  if (!findChromium()) {
+    throw new Error('安装命令完成，但没有找到 Chromium 可执行文件');
+  }
+}
+
 async function ensurePlaywright() {
-  let playwright = findPlaywright();
-  if (playwright) return playwright;
+  let playwright = loadPlaywright();
 
-  const npm = commandPath('npm');
-  if (!npm) {
-    throw new Error(
-      '未找到 Playwright，也未检测到 npm。请安装 npm 和 playwright。'
-    );
+  if (playwright) {
+    log('已检测到 Playwright，跳过安装');
+    return playwright;
   }
 
-  log('未找到 Playwright，尝试安装到脚本目录');
+  log('安装 Playwright，最多等待 5 分钟');
 
-  const env = {
-    ...process.env,
-    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1',
-  };
+  await run('npm', [
+    'install',
+    '--prefix', BASE,
+    '--no-save',
+    '--no-audit',
+    '--no-fund',
+    'playwright'
+  ], CONFIG.installTimeout);
 
-  try {
-    await run(npm, [
-      'install',
-      '--no-save',
-      '--no-audit',
-      '--no-fund',
-      '--legacy-peer-deps',
-      '--prefix',
-      ROOT,
-      'playwright',
-    ], 180000);
-  } catch (error) {
-    log(`默认 npm 源安装失败：${error.message}`);
-
-    await run(npm, [
-      'install',
-      '--no-save',
-      '--no-audit',
-      '--no-fund',
-      '--legacy-peer-deps',
-      '--prefix',
-      ROOT,
-      '--registry=https://registry.npmmirror.com',
-      'playwright',
-    ], 180000);
-  }
-
-  playwright = findPlaywright();
+  playwright = loadPlaywright();
 
   if (!playwright) {
-    throw new Error('Playwright 安装后仍无法加载');
+    throw new Error('Playwright 安装完成，但加载失败');
   }
 
   return playwright;
 }
 
-async function ensureChromium() {
-  let executable = findChromium();
-  if (executable) return executable;
+async function prepareEnvironment() {
+  let chromium = findChromium();
 
-  const osType = detectOS();
-  log(`未找到系统 Chromium，检测到系统：${osType}`);
-
-  if (osType === 'unknown') {
-    throw new Error(
-      '无法识别系统包管理器。请预装 Chromium，并通过 CHROMIUM_PATH 指定路径。'
-    );
+  if (!chromium) {
+    await installChromium();
+    chromium = findChromium();
   }
 
-  // 系统包安装仅在 root 环境执行，避免权限错误和交互式 sudo 卡住。
-  if (typeof process.getuid === 'function' && process.getuid() !== 0) {
-    throw new Error(
-      '当前用户没有 root 权限，无法自动安装系统 Chromium。请在镜像构建阶段安装。'
-    );
-  }
+  const playwright = await ensurePlaywright();
 
-  if (osType === 'alpine') {
-    await run('apk', [
-      'add', '--no-cache',
-      'chromium',
-      'nss',
-      'freetype',
-      'harfbuzz',
-      'ca-certificates',
-      'ttf-freefont',
-    ], 180000);
-  } else {
-    await run('apt-get', ['update'], 180000);
-
-    try {
-      await run('apt-get', [
-        'install', '-y', '--no-install-recommends',
-        'chromium',
-        'ca-certificates',
-        'fonts-liberation',
-      ], 180000);
-    } catch (error) {
-      log(`chromium 安装失败：${error.message}，尝试 chromium-browser`);
-
-      await run('apt-get', [
-        'install', '-y', '--no-install-recommends',
-        'chromium-browser',
-        'ca-certificates',
-        'fonts-liberation',
-      ], 180000);
-    }
-  }
-
-  executable = findChromium();
-
-  if (!executable) {
-    throw new Error(
-      '安装完成后未找到 Chromium，请检查软件源、包名和实际安装路径。'
-    );
-  }
-
-  return executable;
+  return { chromium, playwright };
 }
 
-async function runOnce(chromiumPath, playwright) {
-  const start = Date.now();
+async function runOnce() {
+  const { chromium, playwright } = await prepareEnvironment();
 
-  const result = {
-    url: URL,
-    status: '未知',
-    detail: '',
-    duration_s: 0,
-  };
+  log(`目标：${CONFIG.url}`);
+  log(`浏览器：${chromium}`);
 
-  const browser = await playwright.chromium.launch({
-    executablePath: chromiumPath,
+  browser = await playwright.chromium.launch({
     headless: true,
-    timeout: NAV_TIMEOUT,
+    executablePath: chromium,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-extensions',
-      '--disable-background-networking',
-      '--disable-sync',
-      '--disable-default-apps',
-      '--blink-settings=imagesEnabled=false',
-    ],
+      '--disable-gpu'
+    ]
   });
 
-  browserInstance = browser;
+  const page = await browser.newPage({
+    viewport: { width: 1365, height: 900 }
+  });
 
-  try {
-    const context = await browser.newContext({
-      viewport: { width: 800, height: 600 },
-    });
+  page.setDefaultNavigationTimeout(60000);
+  page.setDefaultTimeout(10000);
 
-    const page = await context.newPage();
-    page.setDefaultTimeout(NAV_TIMEOUT);
-    page.setDefaultNavigationTimeout(NAV_TIMEOUT);
+  log('正在打开 Streamlit 页面');
 
-    await page.route('**/*', route => {
-      const type = route.request().resourceType();
+  await page.goto(CONFIG.url, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000
+  });
 
-      if (['image', 'font', 'media'].includes(type)) {
-        return route.abort();
-      }
+  await delay(3000);
 
-      return route.continue();
-    });
+  const sleepPattern =
+    /gone to sleep|get this app back up|zzz{2,}/i;
 
-    log(`正在打开：${URL}`);
-
-    await page.goto(URL, {
-      waitUntil: 'domcontentloaded',
-      timeout: NAV_TIMEOUT,
-    });
-
-    await page.waitForTimeout(4000);
-
-    async function isSleeping() {
-      const text = await page.locator('body').innerText().catch(() => '');
-      return /gone to sleep|get this app back up|Zzz{2,}/i.test(text);
-    }
-
-    if (!(await isSleeping())) {
-      result.status = '本来就是活的';
-      result.detail = '未检测到 Streamlit 休眠提示';
-    } else {
-      result.detail = '检测到休眠页';
-
-      const button = page.getByRole('button', {
-        name: /get this app back up/i,
-      });
-
-      if (await button.count()) {
-        await button.first().click();
-        result.detail += '，已点击唤醒按钮';
-      } else {
-        result.detail += '，未找到唤醒按钮';
-      }
-
-      let waited = 0;
-      let awake = false;
-
-      while (waited < WAKE_WAIT) {
-        await sleep(POLL_SECONDS * 1000);
-        waited += POLL_SECONDS;
-
-        if (waited % RELOAD_SECONDS === 0) {
-          try {
-            await page.reload({
-              waitUntil: 'domcontentloaded',
-              timeout: NAV_TIMEOUT,
-            });
-          } catch (error) {
-            log(`刷新失败：${error.message}`);
-          }
-        }
-
-        if (!(await isSleeping())) {
-          awake = true;
-          break;
-        }
-
-        log(`等待唤醒：${waited}/${WAKE_WAIT}s`);
-      }
-
-      result.status = awake ? '唤醒成功' : '唤醒超时';
-      result.detail += awake
-        ? `，等待 ${waited}s 后休眠提示消失`
-        : `，等待 ${waited}s 后仍检测到休眠提示`;
-    }
-
-    if (HOLD_SECONDS > 0) {
-      log(`保持浏览器连接 ${HOLD_SECONDS}s`);
-      await page.waitForTimeout(HOLD_SECONDS * 1000);
-    }
-  } finally {
-    browserInstance = null;
-    await browser.close().catch(() => {});
-  }
-
-  result.duration_s = Math.round((Date.now() - start) / 100) / 10;
-  return result;
-}
-
-async function main() {
-  log(`Node.js：${process.version}`);
-  log(`平台：${process.platform} / ${os.arch()}`);
-  log(`系统：${detectOS()}`);
-
-  const chromiumPath = await ensureChromium();
-  log(`浏览器路径：${chromiumPath}`);
-
-  const playwright = await ensurePlaywright();
-
-  let lastError;
-
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+  async function getPageText() {
     try {
-      return await runOnce(chromiumPath, playwright);
-    } catch (error) {
-      lastError = error;
-      log(`第 ${attempt}/${MAX_RETRIES} 次尝试失败：${error.stack || error.message}`);
-
-      if (attempt < MAX_RETRIES) await sleep(3000);
+      return await page.locator('body').innerText();
+    } catch (_) {
+      return '';
     }
   }
 
-  return {
-    url: URL,
-    status: '异常',
-    detail: lastError?.message || '未知错误',
-    duration_s: 0,
-  };
-}
+  let text = await getPageText();
 
-function stopChildren() {
-  stopping = true;
+  if (sleepPattern.test(text)) {
+    log('检测到休眠页面，尝试唤醒');
 
-  if (browserInstance) {
-    browserInstance.close().catch(() => {});
-    browserInstance = null;
+    const buttons = page.locator('button');
+    const count = await buttons.count();
+    let clicked = false;
+
+    for (let i = 0; i < count; i++) {
+      const button = buttons.nth(i);
+      let label = '';
+
+      try {
+        label = await button.innerText();
+      } catch (_) {}
+
+      if (/get this app back up|yes/i.test(label)) {
+        await button.click();
+        clicked = true;
+        log(`已点击唤醒按钮：${label.trim()}`);
+        break;
+      }
+    }
+
+    if (!clicked) {
+      const candidates = [
+        page.getByText(/yes,?\s*get this app back up/i),
+        page.getByText(/get this app back up/i)
+      ];
+
+      for (const candidate of candidates) {
+        try {
+          if (await candidate.count()) {
+            await candidate.first().click();
+            clicked = true;
+            break;
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (!clicked) {
+      throw new Error('检测到休眠页面，但没有找到可点击的唤醒按钮');
+    }
+
+    const start = Date.now();
+    let lastReload = Date.now();
+
+    while (Date.now() - start < CONFIG.wakeTimeout) {
+      await delay(CONFIG.pollInterval);
+
+      text = await getPageText();
+
+      if (!sleepPattern.test(text) &&
+          !/please wait|waking up/i.test(text)) {
+        log('页面已退出休眠状态');
+        break;
+      }
+
+      if (Date.now() - lastReload >= CONFIG.reloadInterval) {
+        log('唤醒等待中，刷新页面');
+        try {
+          await page.reload({ waitUntil: 'domcontentloaded' });
+        } catch (_) {}
+        lastReload = Date.now();
+      }
+    }
+
+    text = await getPageText();
+
+    if (sleepPattern.test(text)) {
+      throw new Error('等待唤醒超时，页面仍显示休眠提示');
+    }
+  } else {
+    log('页面未检测到休眠提示');
   }
 
-  for (const child of childProcesses) {
+  log(`保持页面运行 ${Math.round(CONFIG.holdTime / 1000)} 秒`);
+  await delay(CONFIG.holdTime);
+
+  log('保活任务完成');
+}
+
+async function cleanup() {
+  for (const child of children) {
     try {
       child.kill('SIGTERM');
     } catch (_) {}
   }
-}
 
-async function mainWithTimeout() {
-  let timer;
-
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => {
-      stopChildren();
-      reject(new Error(`总执行时间超过 ${TOTAL_TIMEOUT}s`));
-    }, TOTAL_TIMEOUT * 1000);
-  });
-
-  try {
-    return await Promise.race([main(), timeout]);
-  } finally {
-    clearTimeout(timer);
+  if (browser) {
+    try {
+      await browser.close();
+    } catch (_) {}
+    browser = null;
   }
 }
 
-async function entry() {
-  let result;
+async function main() {
+  const started = Date.now();
+  let result = '执行成功';
+  let exitCode = 0;
+  let detail = '';
+
+  const deadline = setTimeout(() => {
+    if (finished) return;
+
+    finished = true;
+    console.error('\n总超时：任务运行达到 10 分钟上限');
+
+    for (const child of children) {
+      try {
+        child.kill('SIGKILL');
+      } catch (_) {}
+    }
+
+    if (browser) {
+      try {
+        browser.close();
+      } catch (_) {}
+    }
+
+    console.log('\n========== Streamlit 保活结果 ==========');
+    console.log(`目标：${CONFIG.url}`);
+    console.log('状态：执行失败');
+    console.log(`耗时：${Math.round((Date.now() - started) / 1000)}s`);
+    console.log('详情：任务总超时（10 分钟）');
+    console.log('========================================');
+    process.exit(1);
+  }, CONFIG.totalTimeout);
 
   try {
-    result = await mainWithTimeout();
+    await runOnce();
   } catch (error) {
-    result = {
-      url: URL,
-      status: stopping ? '执行超时' : '执行失败',
-      detail: error.message,
-      duration_s: 0,
-    };
+    result = '执行失败';
+    exitCode = 1;
+    detail = error && error.message ? error.message : String(error);
+    console.error(detail);
+  } finally {
+    if (!finished) {
+      finished = true;
+      clearTimeout(deadline);
+      await cleanup();
+
+      console.log('\n========== Streamlit 保活结果 ==========');
+      console.log(`目标：${CONFIG.url}`);
+      console.log(`状态：${result}`);
+      console.log(`耗时：${Math.round((Date.now() - started) / 1000)}s`);
+      if (detail) console.log(`详情：${detail}`);
+      console.log('========================================');
+
+      process.exitCode = exitCode;
+    }
   }
-
-  console.log('\n========== Streamlit 保活结果 ==========');
-  console.log(`目标：${result.url}`);
-  console.log(`状态：${result.status}`);
-  console.log(`耗时：${result.duration_s}s`);
-  console.log(`详情：${result.detail}`);
-  console.log('========================================');
-
-  // 不 require 青龙通知模块。
-  // 当前青龙若启用了会在脚本启动前执行的通知 preload，
-  // 该 preload 自身的兼容性错误必须在青龙运行环境中修复。
-  process.exitCode = ['异常', '执行超时', '执行失败'].includes(result.status)
-    ? 1
-    : 0;
 }
 
-process.on('SIGTERM', stopChildren);
-process.on('SIGINT', stopChildren);
-
-entry().catch(error => {
-  console.error('[致命错误]', error.stack || error);
-  stopChildren();
-  process.exitCode = 1;
+process.on('SIGTERM', () => {
+  cleanup().finally(() => process.exit(143));
 });
+
+process.on('SIGINT', () => {
+  cleanup().finally(() => process.exit(130));
+});
+
+main();
+```
