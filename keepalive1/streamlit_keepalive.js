@@ -8,11 +8,11 @@ const CONFIG = {
   url: process.env.STREAMLIT_URL ||
     'https://l2uetmksgajvryi4qmegvn.streamlit.app/',
 
-  // 首次环境安装的总预算：5 分钟
-  installTimeout: 5 * 60 * 1000,
+  // 首次环境安装的总预算：10 分钟
+  installTimeout: 10 * 60 * 1000,
 
-  // 整个任务的硬超时：10 分钟
-  totalTimeout: 10 * 60 * 1000,
+  // 整个任务的硬超时：15 分钟
+  totalTimeout: 15 * 60 * 1000,
 
   // 页面唤醒等待
   wakeTimeout: 5 * 60 * 1000,
@@ -22,8 +22,8 @@ const CONFIG = {
   // 页面唤醒后继续停留
   holdTime: 60000,
 
-  // 通知最多等待 8 秒
-  notifyTimeout: 8000
+  // 通知最多等待 30 秒
+  notifyTimeout: 30000
 };
 
 const BASE = __dirname;
@@ -57,7 +57,7 @@ function remainingTime(deadline) {
   const remaining = deadline - Date.now();
 
   if (remaining <= 0) {
-    throw new Error('环境安装时间已达到 5 分钟上限');
+    throw new Error('环境安装时间已达到 10 分钟上限');
   }
 
   return remaining;
