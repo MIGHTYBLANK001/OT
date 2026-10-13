@@ -1,0 +1,324 @@
+name: VPNGate -> Mihomo
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"   # 每 6 小时运行一次(UTC)
+  workflow_dispatch:
+    inputs:
+      country:
+        description: "国家代码过滤,逗号分隔,如 JP,KR,US(留空为全部)"
+        required: false
+        default: ""
+      max_proxies:
+        description: "最多输出节点数"
+        required: false
+        default: "50"
+      dialer_proxy:
+        description: "dialer-proxy 名称(节点连接服务器时经过的上游代理,需与你 mihomo 配置中的代理名一致;留空则不写入)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vpngate-mihomo
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pyyaml
+        run: pip install pyyaml
+
+      - name: Generate mihomo proxies
+        env:
+          COUNTRY: ${{ inputs.country }}
+          MAX_PROXIES: ${{ inputs.max_proxies }}
+          DIALER_PROXY: ${{ inputs.dialer_proxy }}
+        run: |
+          python - <<'PY'
+          import base64
+          import datetime as dt
+          import os
+          import re
+          import sys
+          import time
+          import urllib.request
+          from pathlib import Path
+
+          VPNGATE_API_URL = "https://www.vpngate.net/api/iphone/"
+          OUT_FILE = Path("output/mihomo-proxies.yaml")
+          COUNTRY_FILTER = {c.strip().upper() for c in os.environ.get("COUNTRY", "").split(",") if c.strip()}
+          MAX_PROXIES = int(os.environ.get("MAX_PROXIES") or 50)
+          DIALER_PROXY = os.environ.get("DIALER_PROXY", "").strip()
+
+          SUPPORTED_CIPHERS = ["AES-128-GCM", "AES-256-GCM", "AES-128-CBC", "AES-256-CBC", "CHACHA20-POLY1305"]
+          SUPPORTED_AUTH = ["MD5", "SHA1", "SHA256", "SHA384", "SHA512"]
+          BLOCK_TAG_MAP = {"ca": "ca", "cert": "cert", "key": "key", "tls-crypt": "tlsCrypt", "tls-auth": "tlsAuth"}
+
+          def fetch_csv(retries=3):
+              headers = {"User-Agent": "Mozilla/5.0 (compatible; VPNGateMihomo/1.0)", "Accept": "text/plain,*/*"}
+              last_err = None
+              for attempt in range(1, retries + 1):
+                  try:
+                      req = urllib.request.Request(VPNGATE_API_URL, headers=headers)
+                      with urllib.request.urlopen(req, timeout=60) as resp:
+                          return resp.read().decode("utf-8", errors="replace")
+                  except Exception as err:
+                      last_err = err
+                      print(f"[warn] 第 {attempt} 次拉取失败: {err}", file=sys.stderr)
+                      time.sleep(5 * attempt)
+              raise RuntimeError(f"连接 vpngate.net 失败: {last_err}")
+
+          def to_num(value):
+              try:
+                  return float(value)
+              except (TypeError, ValueError):
+                  return 0.0
+
+          def parse_csv(text):
+              # 前 13 个字段固定位置,最后一个字段为 Base64 配置,中间 Message 可能含逗号
+              servers = []
+              for raw in text.splitlines():
+                  line = raw.strip()
+                  if not line or line[0] in "*#":
+                      continue
+                  parts = raw.split(",")
+                  if len(parts) < 15:
+                      continue
+                  ip = parts[1].strip()
+                  config_b64 = parts[-1].strip()
+                  if not ip or not config_b64:
+                      continue
+                  servers.append({
+                      "hostName": parts[0].strip(),
+                      "ip": ip,
+                      "score": to_num(parts[2]),
+                      "countryShort": parts[6].strip(),
+                      "configDataBase64": config_b64,
+                  })
+              return servers
+
+          def decode_config(b64):
+              try:
+                  return base64.b64decode("".join(b64.split())).decode("utf-8", errors="replace")
+              except Exception:
+                  return ""
+
+          def parse_ovpn(raw):
+              result = {
+                  "remoteHost": None, "remotePort": None, "proto": None,
+                  "cipher": None, "auth": None, "compLzo": None, "dev": None,
+                  "ca": None, "cert": None, "key": None, "tlsCrypt": None, "tlsAuth": None,
+                  "keyDirection": None, "authUserPass": False, "mtu": None,
+                  "ping": None, "pingRestart": None,
+              }
+              block = None
+              buf = []
+              for raw_line in re.split(r"\r\n|\r|\n", raw):
+                  trimmed = raw_line.strip()
+                  m = re.fullmatch(r"<(/?)(ca|cert|key|tls-crypt|tls-auth)>", trimmed)
+                  if m:
+                      if not m.group(1):
+                          block = BLOCK_TAG_MAP[m.group(2)]
+                          buf = []
+                      else:
+                          result[BLOCK_TAG_MAP[m.group(2)]] = "\n".join(buf).strip()
+                          block = None
+                      continue
+                  if block:
+                      buf.append(raw_line.rstrip("\r"))
+                      continue
+                  if not trimmed or trimmed[0] in "#;":
+                      continue
+                  parts = trimmed.split(None, 1)
+                  directive = parts[0].lower()
+                  args = parts[1].strip() if len(parts) > 1 else ""
+
+                  if directive == "remote":
+                      p = args.split()
+                      if p:
+                          result["remoteHost"] = p[0]
+                      if len(p) > 1:
+                          result["remotePort"] = p[1]
+                  elif directive == "proto":
+                      a = args.lower()
+                      if a.startswith("tcp"):
+                          result["proto"] = "tcp"
+                      elif a.startswith("udp"):
+                          result["proto"] = "udp"
+                  elif directive == "port":
+                      if not result["remotePort"]:
+                          result["remotePort"] = args
+                  elif directive == "cipher":
+                      result["cipher"] = args
+                  elif directive == "data-ciphers":
+                      if not result["cipher"]:
+                          result["cipher"] = args.split(":")[0].strip()
+                  elif directive == "auth":
+                      result["auth"] = args
+                  elif directive == "comp-lzo":
+                      result["compLzo"] = args or "yes"
+                  elif directive in ("dev", "dev-type"):
+                      d = args.lower()
+                      if d.startswith("tun"):
+                          result["dev"] = "tun"
+                      elif d.startswith("tap"):
+                          result["dev"] = "tap"
+                  elif directive == "key-direction":
+                      result["keyDirection"] = args
+                  elif directive == "auth-user-pass":
+                      result["authUserPass"] = True
+                  elif directive in ("tun-mtu", "link-mtu"):
+                      if not result["mtu"]:
+                          result["mtu"] = args
+                  elif directive == "ping":
+                      result["ping"] = args
+                  elif directive == "ping-restart":
+                      result["pingRestart"] = args
+                  elif directive == "keepalive":
+                      p = args.split()
+                      if p:
+                          result["ping"] = p[0]
+                      if len(p) > 1:
+                          result["pingRestart"] = p[1]
+              return result
+
+          def yaml_quote(s):
+              return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+          def yaml_block(value, indent=4):
+              pad = " " * indent
+              return "\n".join(pad + line for line in str(value).replace("\r\n", "\n").split("\n"))
+
+          def build_proxy(server, p):
+              name = f"VPNGate-{server['countryShort'] or '??'}-{server['ip']}"
+              lines = [
+                  f"- name: {yaml_quote(name)}",
+                  "  type: openvpn",
+                  f"  server: {p['remoteHost'] or server['ip']}",
+                  f"  port: {p['remotePort'] or 1194}",
+                  f"  proto: {p['proto'] or 'udp'}",
+                  # udp 为 mihomo 通用字段(是否允许 UDP 应用流量经该节点转发),OpenVPN 隧道可承载 UDP,恒为 true
+                  "  udp: true",
+              ]
+              if DIALER_PROXY:
+                  lines.append(f"  dialer-proxy: {yaml_quote(DIALER_PROXY)}")
+              if p["authUserPass"]:
+                  lines.append("  # 该配置需要用户名/密码认证 (auth-user-pass),请自行填写凭据")
+                  lines.append('  # username: "your-username"')
+                  lines.append('  # password: "your-password"')
+              if p["cipher"]:
+                  lines.append(f"  cipher: {p['cipher']}")
+              if p["auth"]:
+                  lines.append(f"  auth: {p['auth']}")
+              lines.append("  ca: |")
+              lines.append(yaml_block(p["ca"]))
+              if p["cert"]:
+                  lines.append("  cert: |")
+                  lines.append(yaml_block(p["cert"]))
+              if p["key"]:
+                  lines.append("  key: |")
+                  lines.append(yaml_block(p["key"]))
+              if p["tlsCrypt"]:
+                  lines.append("  tls-crypt: |")
+                  lines.append(yaml_block(p["tlsCrypt"]))
+              elif p["tlsAuth"]:
+                  lines.append(f"  # 原配置为 tls-auth(key-direction {p['keyDirection'] or '未指定'}),此处尽力映射为 tls-crypt")
+                  lines.append("  tls-crypt: |")
+                  lines.append(yaml_block(p["tlsAuth"]))
+              if p["compLzo"]:
+                  val = p["compLzo"] if re.fullmatch(r"(?i)yes|no|adaptive", p["compLzo"]) else "yes"
+                  lines.append(f"  comp-lzo: {val}")
+              if p["mtu"]:
+                  lines.append(f"  mtu: {p['mtu']}")
+              if p["ping"]:
+                  lines.append(f"  ping: {p['ping']}")
+              if p["pingRestart"]:
+                  lines.append(f"  ping-restart: {p['pingRestart']}")
+              return "\n".join(lines), name
+
+          def main():
+              print("[info] 拉取 VPNGate 数据 ...")
+              servers = parse_csv(fetch_csv())
+              if not servers:
+                  raise RuntimeError("未解析到任何节点(接口可能暂时无数据或格式变化)")
+              print(f"[info] 解析到 {len(servers)} 个节点")
+
+              candidates = [s for s in servers if not COUNTRY_FILTER or s["countryShort"].upper() in COUNTRY_FILTER]
+              candidates.sort(key=lambda s: s["score"], reverse=True)
+
+              chunks, seen = [], set()
+              skipped = {"无配置": 0, "tap": 0, "无ca": 0, "重名": 0}
+              for s in candidates:
+                  if len(chunks) >= MAX_PROXIES:
+                      break
+                  raw = decode_config(s["configDataBase64"])
+                  if not raw.strip():
+                      skipped["无配置"] += 1
+                      continue
+                  parsed = parse_ovpn(raw)
+                  if parsed["dev"] == "tap":
+                      skipped["tap"] += 1  # mihomo 仅支持 tun
+                      continue
+                  if not parsed["ca"]:
+                      skipped["无ca"] += 1  # mihomo 要求必须有 ca
+                      continue
+                  text, name = build_proxy(s, parsed)
+                  if name in seen:
+                      skipped["重名"] += 1
+                      continue
+                  seen.add(name)
+                  chunks.append(text)
+
+              if not chunks:
+                  raise RuntimeError(f"没有可用节点,跳过统计: {skipped}")
+
+              now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+              header = (
+                  "# 由 GitHub Actions 自动生成,请勿手动编辑\n"
+                  f"# 更新时间: {now}\n"
+                  f"# 来源: {VPNGATE_API_URL}\n"
+                  f"# 节点数: {len(chunks)}\n"
+                  f"# dialer-proxy: {DIALER_PROXY or '未设置'}\n"
+                  "# 注意: VPNGate 为志愿者提供的公共中继,稳定性与安全性无保证\n"
+              )
+              yaml_text = header + "proxies:\n" + "\n\n".join(chunks) + "\n"
+
+              import yaml
+              data = yaml.safe_load(yaml_text)
+              assert isinstance(data.get("proxies"), list) and data["proxies"], "proxies 为空"
+
+              OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+              OUT_FILE.write_text(yaml_text, encoding="utf-8")
+              print(f"[done] 输出 {len(chunks)} 个节点 -> {OUT_FILE}")
+              print(f"[info] 跳过统计: {skipped}")
+
+          try:
+              main()
+          except Exception as err:
+              print(f"[error] {err}", file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add output/
+          if git diff --cached --quiet; then
+            echo "No changes."
+          else
+            git commit -m "chore: update mihomo proxies $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
