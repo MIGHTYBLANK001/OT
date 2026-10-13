@@ -12,11 +12,11 @@ on:
       max_proxies:
         description: "最多输出节点数"
         required: false
-        default: "50"
+        default: "20"
       dialer_proxy:
         description: "dialer-proxy 名称(节点连接服务器时经过的上游代理,需与你 mihomo 配置中的代理名一致;留空则不写入)"
         required: false
-        default: ""
+        default: "CFSUB"
 
 permissions:
   contents: write
