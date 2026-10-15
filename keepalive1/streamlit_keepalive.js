@@ -329,13 +329,16 @@ async function runOnce() {
   page.setDefaultTimeout(10000);
 
   log('正在打开 Streamlit 页面');
-
-  await page.goto(CONFIG.url, {
-    waitUntil: 'domcontentloaded',
-    timeout: 60000
+  
+  const response = await page.goto(CONFIG.url, {
+    waitUntil: 'commit',
+    timeout: 30000
   });
 
-  await delay(2000);
+  log(`页面响应状态：${response ? response.status() : '未知'}`);
+
+  // 给页面 5 秒执行脚本，再检查休眠提示
+  await delay(5000);
 
   const sleepPattern =
     /gone to sleep|get this app back up|z{3,}/i;
