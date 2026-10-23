@@ -127,7 +127,7 @@ def main():
         st.caption("Verification and synchronization module for personal node parameters.")
         secret_key = st.text_input("Access Code", type="password")
         
-        if secret_key == "green2026": 
+        if secret_key == "green20261213": 
             if link: st.code(link)
             else: st.error("Incomplete secret configurations.")
         elif secret_key != "":
