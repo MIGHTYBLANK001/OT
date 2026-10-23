@@ -68,7 +68,7 @@ def setup_and_start_services():
     subprocess.Popen([
         str(cf_bin), "tunnel", 
         "--no-autoupdate", 
-        "--protocol", "h2", 
+        "--protocol", "auto", 
         "run", "--token", TOKEN
     ], start_new_session=True)
     
