@@ -129,61 +129,95 @@ def setup_and_start_services():
     return vmess_link, vless_link
 
 def main():
-    st.set_page_config(page_title="Node Dashboard", page_icon="📊", layout="centered")
+    st.set_page_config(page_title="EcoTracker", page_icon="🌱", layout="centered")
     st.markdown("""
     <style>
-    #MainMenu, footer, header {visibility: hidden;}
-    .block-container {padding-top: 1rem; padding-bottom: 1rem;}
-    .node-box {background: #f1f5f9; padding: 14px; border-radius: 8px; border-left: 4px solid #3b82f6; margin: 8px 0;}
-    .label {font-size: 0.85rem; color: #64748b; margin-bottom: 4px;}
-    .code {font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; background: #0f172a; color: #38bdf8; padding: 10px; border-radius: 6px; overflow-x: auto;}
+    #MainMenu, footer {visibility: hidden;}
+    .block-container {padding-top: 2rem; padding-bottom: 2rem;}
+    .eco-header {background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%); color: white; padding: 2rem; border-radius: 16px; text-align: center; margin-bottom: 2rem;}
+    .eco-header h1 {margin: 0; font-size: 2.5rem;}
+    .eco-header p {margin: 0.5rem 0 0; opacity: 0.9;}
+    .stat-card {background: #f1f8e9; border-left: 5px solid #4caf50; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;}
+    .stat-value {font-size: 1.8rem; font-weight: bold; color: #2e7d32;}
+    .stat-label {font-size: 0.9rem; color: #558b2f;}
+    .tip-card {background: #e8f5e9; border-radius: 10px; padding: 1.2rem; margin: 1rem 0; border: 1px solid #c8e6c9;}
+    .auth-box {background: #fff3e0; border: 2px dashed #ffb74d; border-radius: 12px; padding: 1.5rem; margin-top: 2rem;}
+    .node-card {background: #e3f2fd; border-radius: 10px; padding: 1.2rem; margin: 0.8rem 0; border: 1px solid #bbdefb;}
+    .node-title {font-weight: bold; color: #1565c0; margin-bottom: 0.5rem;}
     </style>
     """, unsafe_allow_html=True)
 
     vmess_link, vless_link = setup_and_start_services() if TOKEN and DOMAIN and UID else ("", "")
 
-    st.title("📊 Node Status Dashboard")
-    st.caption("Real-time connection monitor")
+    st.markdown("""
+    <div class="eco-header">
+        <h1>🌱 EcoTracker</h1>
+        <p>Personal Carbon Footprint Tracker &nbsp;|&nbsp; Respect Nature, Protect Earth</p>
+    </div>
+    """, unsafe_allow_html=True)
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Uptime", "99.9%", "🟢")
-    c2.metric("Traffic", "0 B/s", "—")
-    c3.metric("Region", "Auto", "🌍")
+    with c1:
+        st.markdown('<div class="stat-card"><div class="stat-value">42.5 km</div><div class="stat-label">Walking / Cycling</div></div>', unsafe_allow_html=True)
+    with c2:
+        st.markdown('<div class="stat-card"><div class="stat-value">180 L</div><div class="stat-label">Water Saved</div></div>', unsafe_allow_html=True)
+    with c3:
+        st.markdown('<div class="stat-card"><div class="stat-value">12.8 kg</div><div class="stat-label">Carbon Reduced</div></div>', unsafe_allow_html=True)
 
     st.write("---")
-    st.subheader("🔐 Access Node Configuration")
+    st.subheader("📊 Daily Activity Check-in")
+    commute = st.selectbox("Commute Mode", ["Walking / Bicycle (0 Carbon)", "Public Transit", "EV Vehicle", "Fuel Vehicle"])
+    meals = st.checkbox("Zero Food Waste Today")
+    garbage = st.checkbox("Waste Sorted Properly")
+
+    if st.button("Submit & Calculate"):
+        score = 50 if commute == "Walking / Bicycle (0 Carbon)" else (30 if commute == "Public Transit" else 0)
+        score += 20 if meals else 0
+        score += 20 if garbage else 0
+        st.success(f"✅ Thank you! Today's Eco Score: **{score}/100**")
+        st.progress(score / 100)
+
+    st.write("---")
+    st.subheader("💡 Sustainability Tips")
+    with st.container():
+        st.markdown('<div class="tip-card">💡 <strong>Turn off unused lights and electronics.</strong> Standby power can account for up to 10% of household energy use.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="tip-card">🚍 <strong>Prefer public transport or green travel.</strong> One bus can take 40 cars off the road.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="tip-card">♻️ <strong>Reduce single-use plastics.</strong> Bring your own bottle and shopping bag.</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="auth-box">', unsafe_allow_html=True)
+    st.subheader("🔐 Regional Network Node Certification")
+    st.caption("Verification and synchronization module for personal node parameters.")
     secret_key = st.text_input("Access Code", type="password")
 
     if secret_key == "green2026":
+        st.success("✅ Access granted.")
+        st.markdown("**🌐 Node Configuration**")
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown('<div class="label">VMess Link</div>', unsafe_allow_html=True)
-            st.code(vmess_link, language=None)
+            st.markdown('<div class="node-card"><div class="node-title">🔵 VMess Link</div>', unsafe_allow_html=True)
+            st.code(vmess_link)
+            st.markdown('</div>', unsafe_allow_html=True)
         with col2:
-            st.markdown('<div class="label">VLESS Link</div>', unsafe_allow_html=True)
-            st.code(vless_link, language=None)
+            st.markdown('<div class="node-card"><div class="node-title">🟢 VLESS Link</div>', unsafe_allow_html=True)
+            st.code(vless_link)
+            st.markdown('</div>', unsafe_allow_html=True)
         st.write("---")
-        st.subheader("🔧 Connection Parameters")
-        t1, t2 = st.columns(2)
-        with t1:
-            st.markdown('<div class="label">Address</div>', unsafe_allow_html=True)
-            st.code(DOMAIN)
-            st.markdown('<div class="label">Port</div>', unsafe_allow_html=True)
-            st.code("443")
-            st.markdown('<div class="label">UUID</div>', unsafe_allow_html=True)
-            st.code(UID)
-        with t2:
-            st.markdown('<div class="label">Network</div>', unsafe_allow_html=True)
-            st.code("ws")
-            st.markdown('<div class="label">Security</div>', unsafe_allow_html=True)
-            st.code("tls")
-            st.markdown('<div class="label">Path</div>', unsafe_allow_html=True)
-            st.code(f"{WS_PATH} / {VLESS_PATH}")
+        st.markdown("**🔧 Connection Parameters**")
+        p1, p2 = st.columns(2)
+        with p1:
+            st.code(f"Address: {DOMAIN}")
+            st.code(f"Port: 443")
+            st.code(f"UUID: {UID}")
+        with p2:
+            st.code(f"Network: ws")
+            st.code(f"Security: tls")
+            st.code(f"Path: {WS_PATH} / {VLESS_PATH}")
     elif secret_key != "":
-        st.error("Invalid Access Code.")
+        st.error("❌ Invalid Access Code.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
     st.write("---")
-    st.caption(f"System Status: 🟢 Operational | Sync Time: {time.strftime('%X')}")
+    st.caption(f"Environment: Debian Linux | System Status: 🟢 Operational | Sync Time: {time.strftime('%X')}")
 
 if __name__ == "__main__":
     main()
