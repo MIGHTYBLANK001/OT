@@ -1,4 +1,4 @@
-import os, json, base64, platform, subprocess, time, tarfile, threading, urllib.request
+import os, json, base64, platform, subprocess, time, tarfile, urllib.request
 from pathlib import Path
 import streamlit as st
 
@@ -8,6 +8,7 @@ TOKEN = st.secrets.get("TOKEN", "")
 DOMAIN = st.secrets.get("DOMAIN", "")
 PORT = 49999
 WS_PATH = f"/{UID[:8]}-vm"
+VLESS_PATH = f"/{UID[:8]}-vl"
 
 def latest(owner, repo):
     with urllib.request.urlopen(f"https://api.github.com/repos/{owner}/{repo}/releases/latest", timeout=10) as r:
@@ -31,16 +32,16 @@ def extract_tar(tgz, base, name):
 def run_cmd(cmd):
     return subprocess.Popen(cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-def is_alive(p):
-    return p is not None and p.poll() is None
-
-def watchdog(sb_proc, cf_proc):
-    while True:
-        time.sleep(20)
-        if not is_alive(sb_proc):
-            sb_proc = run_cmd([str(BASE_DIR / "sing-box"), "run", "-c", str(BASE_DIR / "sb.json")])
-        if not is_alive(cf_proc):
-            cf_proc = run_cmd([str(BASE_DIR / "cloudflared"), "tunnel", "--no-autoupdate", "--protocol", "auto", "run", "--token", TOKEN])
+def mux():
+    return {
+        "enabled": True,
+        "protocol": "mux",
+        "max_connections": 16,
+        "min_streams": 16,
+        "max_streams": 1024,
+        "padding": True,
+        "brutal": True
+    }
 
 @st.cache_resource
 def setup_and_start_services():
@@ -58,7 +59,8 @@ def setup_and_start_services():
         sb_bin.chmod(0o755)
 
     if not cf_bin.exists() or cf_bin.stat().st_size < 1000000:
-        download(f"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{arch}", cf_bin)
+        cf_ver = latest("cloudflare", "cloudflared")
+        download(f"https://github.com/cloudflare/cloudflared/releases/download/{cf_ver}/cloudflared-linux-{arch}", cf_bin)
         cf_bin.chmod(0o755)
 
     os.system("pkill -9 sing-box >/dev/null 2>&1")
@@ -68,20 +70,41 @@ def setup_and_start_services():
     with open("sb.json", "w") as f:
         json.dump({
             "log": {"level": "error"},
-            "inbounds": [{
-                "type": "vmess",
-                "tag": "vmess-in",
-                "listen": "127.0.0.1",
-                "listen_port": PORT,
-                "users": [{"uuid": UID}],
-                "transport": {"type": "ws", "path": WS_PATH}
-            }],
+            "inbounds": [
+                {
+                    "type": "vmess",
+                    "tag": "vmess-in",
+                    "listen": "127.0.0.1",
+                    "listen_port": PORT,
+                    "reuse_addr": True,
+                    "tcp_keep_alive": "30s",
+                    "users": [{"uuid": UID}],
+                    "transport": {
+                        "type": "ws",
+                        "path": WS_PATH,
+                        "multiplex": mux()
+                    }
+                },
+                {
+                    "type": "vless",
+                    "tag": "vless-in",
+                    "listen": "127.0.0.1",
+                    "listen_port": PORT + 1,
+                    "reuse_addr": True,
+                    "tcp_keep_alive": "30s",
+                    "users": [{"uuid": UID, "flow": ""}],
+                    "transport": {
+                        "type": "ws",
+                        "path": VLESS_PATH,
+                        "multiplex": mux()
+                    }
+                }
+            ],
             "outbounds": [{"type": "direct", "tag": "direct"}]
         }, f)
 
-    sb_proc = run_cmd([str(sb_bin), "run", "-c", "sb.json"])
-    cf_proc = run_cmd([str(cf_bin), "tunnel", "--no-autoupdate", "--protocol", "auto", "run", "--token", TOKEN])
-    threading.Thread(target=watchdog, args=(sb_proc, cf_proc), daemon=True).start()
+    run_cmd([str(sb_bin), "run", "-c", "sb.json"])
+    run_cmd([str(cf_bin), "tunnel", "--no-autoupdate", "--protocol", "auto", "run", "--token", TOKEN])
 
     vmess_config = {
         "v": "2",
@@ -99,53 +122,68 @@ def setup_and_start_services():
         "sni": DOMAIN,
         "alpn": ""
     }
-    return "vmess://" + base64.b64encode(json.dumps(vmess_config).encode()).decode()
+    vmess_link = "vmess://" + base64.b64encode(json.dumps(vmess_config).encode()).decode()
+
+    vless_link = f"vless://{UID}@{DOMAIN}:443?encryption=none&security=tls&sni={DOMAIN}&type=ws&host={DOMAIN}&path={VLESS_PATH}#VLESS-Node"
+
+    return vmess_link, vless_link
 
 def main():
-    st.set_page_config(page_title="EcoTracker", page_icon="🌱", layout="centered")
-    st.markdown("<style>#MainMenu, footer {visibility: hidden;}</style>", unsafe_allow_html=True)
+    st.set_page_config(page_title="Node Dashboard", page_icon="📊", layout="centered")
+    st.markdown("""
+    <style>
+    #MainMenu, footer, header {visibility: hidden;}
+    .block-container {padding-top: 1rem; padding-bottom: 1rem;}
+    .node-box {background: #f1f5f9; padding: 14px; border-radius: 8px; border-left: 4px solid #3b82f6; margin: 8px 0;}
+    .label {font-size: 0.85rem; color: #64748b; margin-bottom: 4px;}
+    .code {font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; background: #0f172a; color: #38bdf8; padding: 10px; border-radius: 6px; overflow-x: auto;}
+    </style>
+    """, unsafe_allow_html=True)
 
-    link = setup_and_start_services() if TOKEN and DOMAIN and UID else ""
+    vmess_link, vless_link = setup_and_start_services() if TOKEN and DOMAIN and UID else ("", "")
 
-    st.title("🌱 EcoTracker Dashboard")
-    st.write("Welcome to your personal green living monitor. Track daily habits to promote sustainability.")
+    st.title("📊 Node Status Dashboard")
+    st.caption("Real-time connection monitor")
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Walking / Cycling", "42.5 km", "↑ 12%")
-    c2.metric("Water Saved", "180 L", "↑ 5%")
-    c3.metric("Carbon Reduced", "12.8 kg", "↓ 8%")
+    c1.metric("Uptime", "99.9%", "🟢")
+    c2.metric("Traffic", "0 B/s", "—")
+    c3.metric("Region", "Auto", "🌍")
 
     st.write("---")
-    st.subheader("📊 Daily Activity Check-in")
-    commute = st.selectbox("Commute Mode", ["Walking / Bicycle (0 Carbon)", "Public Transit", "EV Vehicle", "Fuel Vehicle"])
-    meals = st.checkbox("Zero Food Waste Today")
-    garbage = st.checkbox("Waste Sorted Properly")
+    st.subheader("🔐 Access Node Configuration")
+    secret_key = st.text_input("Access Code", type="password")
 
-    if st.button("Submit & Calculate"):
-        score = 50 if commute == "Walking / Bicycle (0 Carbon)" else (30 if commute == "Public Transit" else 0)
-        score += 20 if meals else 0
-        score += 20 if garbage else 0
-        st.info(f"Thank you! Today's Eco Score: **{score}/100**.")
+    if secret_key == "green2026":
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown('<div class="label">VMess Link</div>', unsafe_allow_html=True)
+            st.code(vmess_link, language=None)
+        with col2:
+            st.markdown('<div class="label">VLESS Link</div>', unsafe_allow_html=True)
+            st.code(vless_link, language=None)
+        st.write("---")
+        st.subheader("🔧 Connection Parameters")
+        t1, t2 = st.columns(2)
+        with t1:
+            st.markdown('<div class="label">Address</div>', unsafe_allow_html=True)
+            st.code(DOMAIN)
+            st.markdown('<div class="label">Port</div>', unsafe_allow_html=True)
+            st.code("443")
+            st.markdown('<div class="label">UUID</div>', unsafe_allow_html=True)
+            st.code(UID)
+        with t2:
+            st.markdown('<div class="label">Network</div>', unsafe_allow_html=True)
+            st.code("ws")
+            st.markdown('<div class="label">Security</div>', unsafe_allow_html=True)
+            st.code("tls")
+            st.markdown('<div class="label">Path</div>', unsafe_allow_html=True)
+            st.code(f"{WS_PATH} / {VLESS_PATH}")
+    elif secret_key != "":
+        st.error("Invalid Access Code.")
 
     st.write("---")
-    st.subheader("💡 Sustainability Tips")
-    with st.expander("1. What is Carbon Neutrality?"):
-        st.write("Carbon neutrality refers to balancing emitted carbon with an equivalent amount offset or sequestered.")
-    with st.expander("2. Effective Eco-Friendly Habits"):
-        st.write("• Turn off unused lights and electronics.\n• Prefer public transport or green travel.\n• Reduce single-use plastics.")
-
-    with st.expander("3. Regional Network Node Certification"):
-        st.caption("Verification and synchronization module for personal node parameters.")
-        secret_key = st.text_input("Access Code", type="password")
-
-        if secret_key == "green2026":
-            if link: st.code(link)
-            else: st.error("Incomplete secret configurations.")
-        elif secret_key != "":
-            st.error("Invalid Access Code.")
-
-    st.write("---")
-    st.caption(f"Environment: Debian Linux | System Status: 🟢 Operational | Sync Time: {time.strftime('%X')}")
+    st.caption(f"System Status: 🟢 Operational | Sync Time: {time.strftime('%X')}")
 
 if __name__ == "__main__":
     main()
