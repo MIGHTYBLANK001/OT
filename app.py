@@ -1,169 +1,311 @@
-
 import os
+import re
 import json
 import time
-import uuid
 import hashlib
-import shutil
-import tarfile
 import platform
 import subprocess
 import urllib.request
-import signal
+import tarfile
 from pathlib import Path
 from urllib.parse import urlencode
+
 import streamlit as st
 
 BASE = Path("/tmp/.agsb_stable")
 PORT = 49999
+BASE.mkdir(parents=True, exist_ok=True)
+
+st.set_page_config(page_title="EcoTracker | Climate Tech", page_icon="🌿", layout="wide", initial_sidebar_state="collapsed")
+
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+:root {
+    --paper: #F5F5EC;
+    --forest: #153D2E;
+    --forest2: #214E3B;
+    --lime: #C8FF4D;
+    --muted: #788579;
+    --line: #DFE5D8;
+    --card: #FFFEF8;
+}
+.stApp {
+    background: var(--paper);
+    color: var(--forest);
+    font-family: 'DM Sans', sans-serif;
+}
+.block-container {
+    max-width: 1180px;
+    padding: 2rem 2rem 4rem;
+}
+h1, h2, h3, [data-testid="stMetricValue"] {
+    font-family: 'Manrope', sans-serif !important;
+    color: var(--forest) !important;
+    letter-spacing: -0.04em;
+}
+h1 { font-size: clamp(2.5rem, 5vw, 4.4rem) !important; line-height: 1.04 !important; }
+h2 { font-size: 1.6rem !important; }
+p, label, .stMarkdown { color: var(--forest); }
+[data-testid="stHeader"] { background: transparent; }
+[data-testid="stToolbar"] { right: 1rem; }
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    padding: 1.1rem 1.2rem;
+}
+div[data-testid="stMetric"] {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 1.2rem 1.25rem;
+}
+[data-testid="stMetricLabel"] {
+    color: var(--muted) !important;
+    font-size: .85rem !important;
+}
+[data-testid="stMetricValue"] {
+    font-size: 2rem !important;
+    font-weight: 800 !important;
+}
+.stButton > button, .stFormSubmitButton > button {
+    background: var(--forest);
+    color: white;
+    border: 1px solid var(--forest);
+    border-radius: 12px;
+    font-weight: 700;
+    min-height: 2.8rem;
+    transition: all .18s ease;
+}
+.stButton > button:hover, .stFormSubmitButton > button:hover {
+    background: var(--lime);
+    color: var(--forest);
+    border-color: var(--lime);
+}
+.stTextInput input, .stSelectbox div[data-baseweb="select"] > div {
+    background: #FFFEF8;
+    border-color: var(--line);
+    border-radius: 10px;
+}
+[data-testid="stProgressBar"] > div > div {
+    background: var(--lime);
+}
+hr { border-color: var(--line); }
+.eyebrow {
+    color: #52715B;
+    font-size: .76rem;
+    font-weight: 800;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+}
+.hero {
+    background: var(--forest);
+    border-radius: 28px;
+    padding: clamp(1.8rem, 4vw, 3.5rem);
+    color: #F5F5EC;
+    position: relative;
+    overflow: hidden;
+    margin: .8rem 0 1.4rem;
+}
+.hero:after {
+    content: "";
+    position: absolute;
+    width: 300px;
+    height: 300px;
+    right: -80px;
+    top: -120px;
+    border: 1px solid rgba(200,255,77,.3);
+    border-radius: 50%;
+    box-shadow: 0 0 0 28px rgba(200,255,77,.04), 0 0 0 58px rgba(200,255,77,.035), 0 0 0 90px rgba(200,255,77,.025);
+}
+.hero h1 { color: #F5F5EC !important; margin: .8rem 0 1rem; }
+.hero p { color: #D6E2D4; max-width: 610px; font-size: 1.04rem; line-height: 1.7; }
+.hero .eyebrow { color: var(--lime); }
+.pill {
+    display: inline-block;
+    background: rgba(200,255,77,.12);
+    border: 1px solid rgba(200,255,77,.35);
+    color: var(--lime);
+    padding: .42rem .75rem;
+    border-radius: 99px;
+    font-size: .75rem;
+    font-weight: 700;
+}
+.section-label {
+    font-size: .75rem;
+    font-weight: 800;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: .6rem 0 .85rem;
+}
+.mini-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 1.2rem;
+    min-height: 155px;
+}
+.mini-card .icon {
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    border-radius: 12px;
+    background: #EAF2DF;
+    font-size: 1.2rem;
+    margin-bottom: 1rem;
+}
+.mini-card h3 { font-size: 1rem !important; margin: 0 0 .45rem; letter-spacing: -.02em; }
+.mini-card p { color: var(--muted); font-size: .88rem; line-height: 1.6; margin: 0; }
+.impact-card {
+    background: var(--lime);
+    border-radius: 20px;
+    padding: 1.35rem;
+    color: var(--forest);
+}
+.impact-card h2 { margin: .25rem 0; font-size: 2rem !important; }
+.impact-card p { margin: 0; font-size: .85rem; }
+.footer {
+    color: var(--muted);
+    font-size: .78rem;
+    border-top: 1px solid var(--line);
+    margin-top: 3rem;
+    padding-top: 1.2rem;
+}
+#MainMenu, footer { visibility: hidden; }
+@media (max-width: 700px) {
+    .block-container { padding: 1rem 1rem 3rem; }
+    .hero { border-radius: 20px; }
+}
+</style>
+""", unsafe_allow_html=True)
 
 
-def secret(key, default=""):
-    return str(st.secrets.get(key, default)).strip()
+def download(url, dest):
+    req = urllib.request.Request(url, headers={"User-Agent": "EcoTracker"})
+    with urllib.request.urlopen(req, timeout=45) as r, open(dest, "wb") as f:
+        f.write(r.read())
 
 
-UID = secret("UUID")
-TOKEN = secret("TOKEN")
-DOMAIN = secret("DOMAIN").removeprefix("https://").removeprefix("http://").rstrip("/")
-MEMBER_CODE = secret("MEMBER_CODE", "green2026")
-WS_PATH = "/" + UID[:8]
-
-
-def download(url, dst, minimum=1_000_000):
-    tmp = Path(str(dst) + ".part")
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "EcoTracker"})
-        with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:
-            shutil.copyfileobj(r, f)
-        if tmp.stat().st_size < minimum:
-            raise RuntimeError("Downloaded file is too small")
-        os.replace(tmp, dst)
-    finally:
-        tmp.unlink(missing_ok=True)
-
-
-def latest(owner, repo):
+def latest_release(repo):
     req = urllib.request.Request(
-        f"https://api.github.com/repos/{owner}/{repo}/releases/latest",
-        headers={"User-Agent": "EcoTracker"},
+        f"https://api.github.com/repos/{repo}/releases/latest",
+        headers={"User-Agent": "EcoTracker"}
     )
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.load(r)["tag_name"].lstrip("v")
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read())
 
 
-def extract_binary(archive, destination):
-    with tarfile.open(archive, "r:gz") as tar:
-        member = next(
-            (m for m in tar.getmembers()
-             if Path(m.name).name == "sing-box" and m.isfile()),
-            None,
-        )
-        if member is None:
-            raise RuntimeError("sing-box binary not found")
-        src = tar.extractfile(member)
-        if src is None:
-            raise RuntimeError("Unable to extract sing-box")
-        with src, open(destination, "wb") as dst:
-            shutil.copyfileobj(src, dst)
-    destination.chmod(0o755)
+def extract_binary(repo, pattern, name):
+    dest = BASE / name
+    if dest.exists() and os.access(dest, os.X_OK):
+        return dest
+
+    release = latest_release(repo)
+    asset = next(
+        (a for a in release.get("assets", []) if re.search(pattern, a["name"], re.I)),
+        None
+    )
+    if not asset:
+        raise RuntimeError(f"Could not find a compatible release asset for {name}")
+
+    archive = BASE / asset["name"]
+    download(asset["browser_download_url"], archive)
+
+    if archive.name.endswith(".tar.gz"):
+        with tarfile.open(archive, "r:gz") as tar:
+            member = next(
+                (m for m in tar.getmembers() if Path(m.name).name == name),
+                None
+            )
+            if not member:
+                member = next(
+                    (m for m in tar.getmembers() if Path(m.name) in
+                     (Path("sing-box"), Path("cloudflared"))),
+                    None
+                )
+            if not member:
+                raise RuntimeError(f"Binary {name} was not found in the archive")
+            member.name = name
+            tar.extract(member, BASE, filter="data")
+            extracted = BASE / name
+            extracted.chmod(0o755)
+    else:
+        archive.replace(dest)
+        dest.chmod(0o755)
+
+    archive.unlink(missing_ok=True)
+    return dest
 
 
 def find_process(binary):
-    target = str(binary).encode()
-    for entry in Path("/proc").glob("[0-9]*"):
+    for p in Path("/proc").iterdir():
+        if not p.name.isdigit():
+            continue
         try:
-            args = (entry / "cmdline").read_bytes().split(b"\0")
-            if args and args[0] == target:
-                return int(entry.name)
+            args = (p / "cmdline").read_bytes().split(b"\0")
+            if args and args[0].decode(errors="ignore") == str(binary):
+                return int(p.name)
         except (OSError, ValueError):
             pass
     return None
 
 
-def stop_process(pid):
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    for _ in range(20):
-        try:
-            os.kill(pid, 0)
-            time.sleep(0.1)
-        except ProcessLookupError:
-            return
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-
-
-def log_tail(name):
-    p = BASE / name
-    return p.read_text(errors="replace")[-3000:] if p.exists() else "No log available"
-
-
-def start_process(binary, args, log_name):
-    with open(BASE / log_name, "ab", buffering=0) as log:
-        proc = subprocess.Popen(
-            [str(binary), *args],
-            cwd=BASE,
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    time.sleep(1)
-    if proc.poll() is not None:
-        raise RuntimeError(f"{binary.name} failed:\n{log_tail(log_name)}")
-    return proc.pid
-
-
 def ensure_process(binary, args, log_name, restart=False):
     pid = find_process(binary)
     if pid and restart:
-        stop_process(pid)
-        pid = None
+        try:
+            os.kill(pid, 15)
+        except ProcessLookupError:
+            pass
+        for _ in range(20):
+            time.sleep(.15)
+            if not find_process(binary):
+                break
+        pid = find_process(binary)
+
     if pid:
         return pid
-    return start_process(binary, args, log_name)
+
+    log = open(BASE / log_name, "ab", buffering=0)
+    proc = subprocess.Popen(
+        [str(binary), *args],
+        cwd=BASE,
+        stdin=subprocess.DEVNULL,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True
+    )
+    time.sleep(.7)
+    if proc.poll() is not None:
+        detail = (BASE / log_name).read_text(errors="ignore")[-2500:]
+        raise RuntimeError(f"{binary.name} exited during startup:\n{detail}")
+    return proc.pid
 
 
 def setup():
-    if not UID or not TOKEN or not DOMAIN:
-        raise RuntimeError("Configure UUID, TOKEN and DOMAIN in Streamlit Secrets")
-    try:
-        uuid.UUID(UID)
-    except ValueError:
-        raise RuntimeError("Invalid UUID")
+    secrets = st.secrets
+    uid = str(secrets["UUID"]).strip()
+    token = str(secrets["TOKEN"]).strip()
+    domain = str(secrets["DOMAIN"]).strip().replace("https://", "").replace("http://", "").rstrip("/")
+    if not uid or not token or not domain:
+        raise RuntimeError("UUID, TOKEN and DOMAIN must be configured in Streamlit Secrets.")
 
-    BASE.mkdir(parents=True, exist_ok=True)
-    sb, cf = BASE / "sing-box", BASE / "cloudflared"
-    arch = {
-        "x86_64": "amd64", "amd64": "amd64",
-        "aarch64": "arm64", "arm64": "arm64",
-    }.get(platform.machine().lower())
+    machine = platform.machine().lower()
+    arch = "amd64" if machine in ("x86_64", "amd64") else "arm64" if machine in ("aarch64", "arm64") else None
     if not arch:
-        raise RuntimeError("Unsupported CPU architecture")
+        raise RuntimeError(f"Unsupported CPU architecture: {machine}")
 
-    if not sb.exists() or sb.stat().st_size < 1_000_000:
-        ver = latest("SagerNet", "sing-box")
-        archive = BASE / "sing-box.tar.gz"
-        download(
-            f"https://github.com/SagerNet/sing-box/releases/download/"
-            f"v{ver}/sing-box-{ver}-linux-{arch}.tar.gz",
-            archive,
-        )
-        extract_binary(archive, sb)
-        archive.unlink(missing_ok=True)
+    sb_pattern = rf"sing-box-.*-linux-{arch}\.tar\.gz$"
+    cf_pattern = rf"cloudflared-linux-{arch}$"
 
-    if not cf.exists() or cf.stat().st_size < 1_000_000:
-        ver = latest("cloudflare", "cloudflared")
-        download(
-            f"https://github.com/cloudflare/cloudflared/releases/download/"
-            f"{ver}/cloudflared-linux-{arch}", cf,
-        )
-        cf.chmod(0o755)
+    sb = extract_binary("SagerNet/sing-box", sb_pattern, "sing-box")
+    cf = extract_binary("cloudflare/cloudflared", cf_pattern, "cloudflared")
 
+    ws_path = "/" + uid[:8]
     config = {
         "log": {"level": "error"},
         "inbounds": [{
@@ -171,153 +313,182 @@ def setup():
             "tag": "vless-in",
             "listen": "127.0.0.1",
             "listen_port": PORT,
-            "users": [{"uuid": UID}],
-            "transport": {"type": "ws", "path": WS_PATH},
-            "multiplex": {"enabled": True, "padding": False},
+            "users": [{"uuid": uid}],
+            "transport": {"type": "ws", "path": ws_path},
+            "multiplex": {"enabled": True, "padding": False}
         }],
-        "outbounds": [{"type": "direct", "tag": "direct"}],
+        "outbounds": [{"type": "direct", "tag": "direct"}]
     }
 
     raw = json.dumps(config, indent=2)
-    config_hash = hashlib.sha256(raw.encode()).hexdigest()
+    digest = hashlib.sha256(raw.encode()).hexdigest()
     stamp = BASE / "sb.sha256"
-    restart = not stamp.exists() or stamp.read_text().strip() != config_hash
+    restart = not stamp.exists() or stamp.read_text().strip() != digest
     (BASE / "sb.json").write_text(raw, encoding="utf-8")
 
     check = subprocess.run(
         [str(sb), "check", "-c", "sb.json"],
-        cwd=BASE, capture_output=True, text=True, timeout=15,
+        cwd=BASE, capture_output=True, text=True, timeout=15
     )
     if check.returncode:
-        raise RuntimeError(f"sing-box config error:\n{check.stdout}\n{check.stderr}")
+        raise RuntimeError(check.stderr or check.stdout or "sing-box config validation failed")
 
-    sb_pid = ensure_process(
-        sb, ["run", "-c", "sb.json"], "sing-box.log", restart
-    )
-    stamp.write_text(config_hash)
+    sb_pid = ensure_process(sb, ["run", "-c", "sb.json"], "sing-box.log", restart)
+    stamp.write_text(digest)
 
     cf_pid = ensure_process(
         cf,
-        ["tunnel", "--no-autoupdate", "--protocol", "auto", "run", "--token", TOKEN],
-        "cloudflared.log",
+        ["tunnel", "--no-autoupdate", "--protocol", "auto", "run", "--token", token],
+        "cloudflared.log"
     )
-    return sb_pid, cf_pid
+    return uid, domain, ws_path, sb_pid, cf_pid
 
 
-def node_link():
-    params = urlencode({
-        "encryption": "none",
-        "security": "tls",
-        "sni": DOMAIN,
-        "type": "ws",
-        "host": DOMAIN,
-        "path": WS_PATH,
-    })
-    return f"vless://{UID}@{DOMAIN}:443?{params}#EcoTracker"
+def node_link(uid, domain, ws_path):
+    params = urlencode({"encryption": "none", "type": "ws", "host": domain, "path": ws_path, "security": "tls", "sni": domain, "fp": "chrome"})
+    return f"vless://{uid}@{domain}:443?{params}#EcoTracker"
 
 
 def main():
-    st.set_page_config(page_title="EcoTracker", page_icon="🌱", layout="centered")
-    st.title("EcoTracker")
-    st.caption("Small Actions. Lasting Impact.")
-    st.markdown(
-        "Track sustainable habits, reduce waste, and make everyday choices "
-        "that are better for the planet."
-    )
+    st.markdown("""
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap">
+      <div style="font-family:Manrope,sans-serif;font-weight:800;font-size:1.2rem;letter-spacing:-.04em">
+        <span style="color:#315D3C">●</span> EcoTracker
+      </div>
+      <div style="font-size:.78rem;color:#788579;letter-spacing:.08em;text-transform:uppercase">
+        Personal climate dashboard&nbsp; / &nbsp;2026
+      </div>
+    </div>
+    <div class="hero">
+      <span class="eyebrow">Small actions. Measurable change.</span>
+      <h1>A lighter footprint<br>starts with you.</h1>
+      <p>Build a more sustainable routine, track the little things that add up, and turn everyday choices into lasting impact.</p>
+      <span class="pill">●&nbsp; YOUR DAILY IMPACT, REIMAGINED</span>
+    </div>
+    """, unsafe_allow_html=True)
 
-    try:
-        sb_pid, cf_pid = setup()
-        st.success("Services are running")
-    except Exception as e:
-        st.error(f"Service startup failed: {e}")
-        with st.expander("Diagnostics"):
-            st.code(log_tail("sing-box.log"))
-            st.code(log_tail("cloudflared.log"))
+    st.markdown('<div class="section-label">Impact overview · illustrative demo data</div>', unsafe_allow_html=True)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("CO₂ avoided", "12.8 kg", "+8.4%")
+    m2.metric("Water saved", "180 L", "+12.0%")
+    m3.metric("Car-free distance", "42.5 km", "+6.2%")
 
-    st.subheader("Your Sustainability Snapshot")
-    a, b, c = st.columns(3)
-    a.metric("Green Travel", "42.5 km")
-    b.metric("Water Saved", "180 L")
-    c.metric("Carbon Reduced", "12.8 kg")
+    left, right = st.columns([1.12, .88], gap="large")
 
-    with st.container(border=True):
-        st.subheader("Daily Eco Check-in")
-        commute = st.selectbox(
-            "How did you travel today?",
-            ["Walking / Cycling", "Public Transit", "Electric Vehicle", "Fuel Vehicle"],
-        )
-        meals = st.checkbox("I avoided food waste")
-        waste = st.checkbox("I sorted waste correctly")
-        reuse = st.checkbox("I used reusable bags or bottles")
-        energy = st.checkbox("I switched off unused devices")
-
-        if st.button("Calculate Eco Score", use_container_width=True):
-            score = {
-                "Walking / Cycling": 40,
-                "Public Transit": 30,
-                "Electric Vehicle": 20,
-                "Fuel Vehicle": 0,
-            }[commute]
-            score = min(100, score + 15 * sum([meals, waste, reuse, energy]))
-            st.metric("Today's Eco Score", f"{score}/100")
+    with left:
+        st.markdown('<div class="section-label">01 / Daily check-in</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown("### Make today count")
+            st.caption("Log a few choices. Your daily score updates instantly.")
+            transport = st.selectbox(
+                "How did you get around?",
+                ["Walking", "Cycling", "Public transit", "Electric vehicle", "Fuel-powered vehicle"]
+            )
+            actions = st.multiselect(
+                "Which habits did you complete?",
+                ["Plant-forward meal", "Avoided food waste", "Sorted recycling", "Used reusables", "Saved energy"],
+                default=[]
+            )
+            base_score = {
+                "Walking": 40, "Cycling": 40, "Public transit": 30,
+                "Electric vehicle": 20, "Fuel-powered vehicle": 0
+            }[transport]
+            score = min(100, base_score + len(actions) * 12)
+            st.markdown('<div class="section-label">YOUR DAILY ECO SCORE</div>', unsafe_allow_html=True)
             st.progress(score / 100)
-            st.caption("A simple habit score, not a measured carbon footprint.")
+            st.markdown(
+                f'<div style="display:flex;align-items:baseline;gap:.5rem">'
+                f'<span style="font-family:Manrope,sans-serif;font-size:2.5rem;font-weight:800;color:#153D2E">{score}</span>'
+                f'<span style="color:#788579">/ 100 points</span></div>',
+                unsafe_allow_html=True
+            )
+            st.caption("A simple habit score for motivation, not a scientific carbon calculation.")
+            if st.button("Save today's check-in", use_container_width=True):
+                st.session_state["last_score"] = score
+                st.session_state["last_actions"] = actions
+                st.session_state["checked_in"] = True
+                st.success(f"Check-in saved for this session · {score} points")
 
-    with st.container(border=True):
-        st.subheader("Greener Living")
+            if st.session_state.get("checked_in"):
+                st.caption(f"Latest saved score: {st.session_state['last_score']} / 100")
+
+    with right:
+        st.markdown('<div class="section-label">02 / Your next small win</div>', unsafe_allow_html=True)
         st.markdown("""
-**Transport**
-- Walk, cycle, or take public transit for short trips.
-- Combine errands to reduce unnecessary journeys.
+        <div class="impact-card">
+          <div style="font-size:.76rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase">TODAY'S FOCUS</div>
+          <h2>Choose reuse.</h2>
+          <p>Bring a bottle, cup or shopping bag. One less disposable item is a simple habit worth repeating.</p>
+          <div style="font-size:2.4rem;margin-top:.5rem">↗</div>
+        </div>
+        <div style="height:14px"></div>
+        <div class="mini-card">
+          <div class="icon">↗</div>
+          <h3>Move with intention</h3>
+          <p>Walk, cycle or use public transport when it fits your journey.</p>
+        </div>
+        <div style="height:12px"></div>
+        <div class="mini-card">
+          <div class="icon">✳</div>
+          <h3>Waste less food</h3>
+          <p>Plan one meal ahead and use what you already have.</p>
+        </div>
+        <div style="height:12px"></div>
+        <div class="mini-card">
+          <div class="icon">⌁</div>
+          <h3>Use energy thoughtfully</h3>
+          <p>Switch off unused lights and devices before leaving a room.</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-**Food**
-- Plan meals and store food properly.
-- Use leftovers and choose seasonal produce.
+    st.markdown("""
+    <div class="footer">
+      <div style="display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap">
+        <span>ECOTRACKER · MAKE BETTER HABITS VISIBLE</span>
+        <span>Demo metrics are illustrative, not measured personal impact.</span>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-**Water and Energy**
-- Take shorter showers and fix leaking taps.
-- Switch off idle electronics and choose efficient appliances.
-
-**Waste and Nature**
-- Reuse, repair, and recycle whenever possible.
-- Avoid single-use plastics and protect local green spaces.
-""")
-
-    with st.expander("About Sustainability"):
-        st.markdown("""
-- **Climate:** Cleaner transport and lower energy use can reduce emissions.
-- **Resources:** Reuse and repair conserve materials.
-- **Biodiversity:** Less pollution helps protect ecosystems.
-- **Community:** Small, consistent habits can inspire others.
-""")
-
-    with st.expander("Admin"):
-        st.caption("Restricted connection settings")
+    with st.expander("Settings", expanded=False):
+        st.caption("Restricted area")
         with st.form("admin_login"):
-            code = st.text_input("Access Code", type="password")
-            login = st.form_submit_button("Verify")
+            password = st.text_input("Access code", type="password")
+            login = st.form_submit_button("Unlock", use_container_width=True)
         if login:
-            st.session_state["admin_ok"] = bool(code and code == MEMBER_CODE)
+            expected = str(st.secrets.get("MEMBER_CODE", "green2026"))
+            st.session_state["admin_ok"] = password == expected
             st.session_state["show_node"] = False
             if not st.session_state["admin_ok"]:
-                st.error("Invalid access code")
-
+                st.error("Invalid access code.")
         if st.session_state.get("admin_ok"):
             st.success("Access granted")
-            if st.button("◉", help="Show or hide connection details"):
+            if st.button("◉", help="Reveal or hide node details", key="toggle_node"):
                 st.session_state["show_node"] = not st.session_state.get("show_node", False)
             if st.session_state.get("show_node"):
-                st.code(node_link(), language=None)
-                st.code(
-                    f"Address: {DOMAIN}\nPort: 443\nUUID: {UID}\n"
-                    f"Network: WebSocket\nSecurity: TLS\nPath: {WS_PATH}\n"
-                    "Server Multiplex: Enabled",
-                    language=None,
-                )
-
-    st.divider()
-    st.caption(f"EcoTracker | {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                uid, domain, ws_path, sb_pid, cf_pid = setup()
+                link = node_link(uid, domain, ws_path)
+                st.text_input("VLESS link", value=link)
+                st.code(json.dumps({
+                    "server": domain,
+                    "port": 443,
+                    "uuid": uid,
+                    "network": "ws",
+                    "path": ws_path,
+                    "tls": True,
+                    "multiplex": True,
+                    "sing_box_pid": sb_pid,
+                    "cloudflared_pid": cf_pid
+                }, indent=2), language="json")
+        else:
+            st.caption("Connection details are hidden until access is verified.")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+        if "UUID" in st.secrets and "TOKEN" in st.secrets and "DOMAIN" in st.secrets:
+            setup()
+    except Exception as e:
+        st.error("Service initialization failed.")
+        st.code(str(e))
