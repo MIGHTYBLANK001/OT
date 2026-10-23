@@ -1,180 +1,273 @@
-import os, json, base64, platform, subprocess, time, tarfile, urllib.request
+
+import os
+import json
+import time
+import uuid
+import shutil
+import tarfile
+import platform
+import subprocess
+import urllib.request
 from pathlib import Path
+from urllib.parse import quote
+
 import streamlit as st
 
-BASE_DIR = Path("/tmp/.agsb_stable").resolve()
-UID = st.secrets.get("UUID", "")
-TOKEN = st.secrets.get("TOKEN", "")
-DOMAIN = st.secrets.get("DOMAIN", "")
+BASE = Path("/tmp/.agsb_stable")
 PORT = 49999
-WS_PATH = f"/{UID[:8]}"
+
+
+def secret(key, default=""):
+    return str(st.secrets.get(key, default)).strip()
+
+
+UID = secret("UUID")
+TOKEN = secret("TOKEN")
+DOMAIN = secret("DOMAIN").removeprefix("https://").removeprefix("http://").rstrip("/")
+MEMBER_CODE = secret("MEMBER_CODE", "green2026")
+WS_PATH = "/" + UID[:8]
+
+
+def download(url, dst, minimum=1_000_000):
+    tmp = Path(str(dst) + ".part")
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "EcoTracker"}
+        )
+        with urllib.request.urlopen(req, timeout=60) as response, open(tmp, "wb") as f:
+            shutil.copyfileobj(response, f)
+        if tmp.stat().st_size < minimum:
+            raise RuntimeError(f"下载文件异常: {tmp.stat().st_size} bytes")
+        os.replace(tmp, dst)
+    finally:
+        tmp.unlink(missing_ok=True)
+
 
 def latest(owner, repo):
-    with urllib.request.urlopen(f"https://api.github.com/repos/{owner}/{repo}/releases/latest", timeout=10) as r:
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{owner}/{repo}/releases/latest",
+        headers={"User-Agent": "EcoTracker"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as r:
         return json.load(r)["tag_name"].lstrip("v")
 
-def download(url, dst):
-    tmp = str(dst) + ".part"
-    urllib.request.urlretrieve(url, tmp)
-    if os.path.getsize(tmp) < 1000000:
-        os.remove(tmp)
-        raise RuntimeError("download too small")
-    os.replace(tmp, dst)
 
-def extract_tar(tgz, base, name):
-    with tarfile.open(tgz) as tar:
-        for m in tar.getmembers():
-            if m.name.endswith(name):
-                m.name = os.path.basename(m.name)
-                tar.extract(m, path=base, filter="data" if hasattr(tarfile, "data_filter") else None)
+def extract_binary(archive, destination, filename):
+    with tarfile.open(archive, "r:gz") as tar:
+        member = next(
+            (m for m in tar.getmembers()
+             if Path(m.name).name == filename and m.isfile()),
+            None,
+        )
+        if member is None:
+            raise RuntimeError(f"发布包中未找到 {filename}")
+        src = tar.extractfile(member)
+        if src is None:
+            raise RuntimeError("无法读取发布包")
+        with src, open(destination, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+    destination.chmod(0o755)
 
-def run_cmd(cmd):
-    return subprocess.Popen(cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-def mux():
-    return {
-        "enabled": True,
-        "protocol": "mux",
-        "max_connections": 16,
-        "min_streams": 16,
-        "max_streams": 1024,
-        "padding": True,
-        "brutal": True
-    }
+def run_logged(cmd, log_name):
+    with open(BASE / log_name, "ab", buffering=0) as log:
+        return subprocess.Popen(
+            cmd,
+            cwd=BASE,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+
+def log_tail(name):
+    path = BASE / name
+    return path.read_text(errors="replace")[-4000:] if path.exists() else "(无日志)"
+
+
+def check_config(sb):
+    result = subprocess.run(
+        [str(sb), "check", "-c", "sb.json"],
+        cwd=BASE, capture_output=True, text=True, timeout=15,
+    )
+    if result.returncode:
+        raise RuntimeError(
+            f"sing-box 配置校验失败:\n{result.stdout}\n{result.stderr}"
+        )
+
 
 @st.cache_resource
-def setup_and_start_services():
-    if not BASE_DIR.exists():
-        BASE_DIR.mkdir(parents=True)
-    os.chdir(BASE_DIR)
+def setup():
+    if not UID or not TOKEN or not DOMAIN:
+        raise RuntimeError("请在 Streamlit Secrets 中配置 UUID、TOKEN、DOMAIN")
+    try:
+        uuid.UUID(UID)
+    except ValueError:
+        raise RuntimeError("UUID 格式无效")
 
-    arch = "amd64" if "x86_64" in platform.machine() else "arm64"
-    sb_bin, cf_bin = BASE_DIR / "sing-box", BASE_DIR / "cloudflared"
+    BASE.mkdir(parents=True, exist_ok=True)
+    sb, cf = BASE / "sing-box", BASE / "cloudflared"
+    machine = platform.machine().lower()
+    arch = {"x86_64": "amd64", "amd64": "amd64",
+            "aarch64": "arm64", "arm64": "arm64"}.get(machine)
+    if not arch:
+        raise RuntimeError(f"不支持的 CPU 架构: {machine}")
 
-    if not sb_bin.exists() or sb_bin.stat().st_size < 1000000:
-        sb_ver = latest("SagerNet", "sing-box")
-        download(f"https://github.com/SagerNet/sing-box/releases/download/v{sb_ver}/sing-box-{sb_ver}-linux-{arch}.tar.gz", BASE_DIR / "sb.tgz")
-        extract_tar(BASE_DIR / "sb.tgz", BASE_DIR, "sing-box")
-        sb_bin.chmod(0o755)
+    if not sb.exists() or sb.stat().st_size < 1_000_000:
+        ver = latest("SagerNet", "sing-box")
+        archive = BASE / "sing-box.tar.gz"
+        download(
+            f"https://github.com/SagerNet/sing-box/releases/download/"
+            f"v{ver}/sing-box-{ver}-linux-{arch}.tar.gz",
+            archive,
+        )
+        extract_binary(archive, sb, "sing-box")
+        archive.unlink(missing_ok=True)
 
-    if not cf_bin.exists() or cf_bin.stat().st_size < 1000000:
-        cf_ver = latest("cloudflare", "cloudflared")
-        download(f"https://github.com/cloudflare/cloudflared/releases/download/{cf_ver}/cloudflared-linux-{arch}", cf_bin)
-        cf_bin.chmod(0o755)
+    if not cf.exists() or cf.stat().st_size < 1_000_000:
+        ver = latest("cloudflare", "cloudflared")
+        download(
+            f"https://github.com/cloudflare/cloudflared/releases/download/"
+            f"{ver}/cloudflared-linux-{arch}",
+            cf,
+        )
+        cf.chmod(0o755)
 
-    os.system("pkill -9 sing-box >/dev/null 2>&1")
-    os.system("pkill -9 cloudflared >/dev/null 2>&1")
-    time.sleep(0.2)
+    config = {
+        "log": {"level": "error"},
+        "inbounds": [{
+            "type": "vless",
+            "tag": "vless-in",
+            "listen": "127.0.0.1",
+            "listen_port": PORT,
+            "users": [{"uuid": UID}],
+            "transport": {
+                "type": "ws",
+                "path": WS_PATH,
+            },
+        }],
+        "outbounds": [{"type": "direct", "tag": "direct"}],
+    }
+    (BASE / "sb.json").write_text(
+        json.dumps(config, indent=2), encoding="utf-8"
+    )
+    check_config(sb)
 
-    with open("sb.json", "w") as f:
-        json.dump({
-            "log": {"level": "error"},
-            "inbounds": [{
-                "type": "vless",
-                "tag": "vless-in",
-                "listen": "127.0.0.1",
-                "listen_port": PORT,
-                "reuse_addr": True,
-                "tcp_keep_alive": "30s",
-                "users": [{"uuid": UID, "flow": ""}],
-                "transport": {
-                    "type": "ws",
-                    "path": WS_PATH,
-                    "multiplex": mux()
-                }
-            }],
-            "outbounds": [{"type": "direct", "tag": "direct"}]
-        }, f)
+    # 缓存只初始化一次；避免每次 Streamlit 重跑都杀死旧进程。
+    sb_proc = run_logged([str(sb), "run", "-c", "sb.json"], "sing-box.log")
+    time.sleep(1)
+    if sb_proc.poll() is not None:
+        raise RuntimeError("sing-box 启动失败:\n" + log_tail("sing-box.log"))
 
-    run_cmd([str(sb_bin), "run", "-c", "sb.json"])
-    run_cmd([str(cf_bin), "tunnel", "--no-autoupdate", "--protocol", "auto", "run", "--token", TOKEN])
+    cf_proc = run_logged([
+        str(cf), "tunnel", "--no-autoupdate",
+        "--protocol", "auto", "run", "--token", TOKEN,
+    ], "cloudflared.log")
+    time.sleep(2)
+    if cf_proc.poll() is not None:
+        raise RuntimeError("cloudflared 启动失败:\n" + log_tail("cloudflared.log"))
 
-    vless_link = f"vless://{UID}@{DOMAIN}:443?encryption=none&security=tls&sni={DOMAIN}&type=ws&host={DOMAIN}&path={WS_PATH}#VLESS-Node"
-    return vless_link
+    return sb_proc, cf_proc
+
+
+def node_link():
+    from urllib.parse import urlencode
+    params = urlencode({
+        "encryption": "none",
+        "security": "tls",
+        "sni": DOMAIN,
+        "type": "ws",
+        "host": DOMAIN,
+        "path": WS_PATH,
+    })
+    return f"vless://{UID}@{DOMAIN}:443?{params}#VLESS-Node"
+
 
 def main():
-    st.set_page_config(page_title="EcoTracker", page_icon="🌱", layout="centered")
+    st.set_page_config(page_title="EcoTracker", page_icon="🌱")
     st.markdown("""
     <style>
-    #MainMenu, footer {visibility: hidden;}
-    .block-container {padding-top: 2rem; padding-bottom: 2rem; max-width: 720px;}
-    .eco-head {background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%); color: #fff; padding: 26px 22px; border-radius: 16px; text-align: center; margin-bottom: 24px;}
-    .eco-head h1 {margin: 0; font-size: 2rem; letter-spacing: 0.5px;}
-    .eco-head p {margin: 6px 0 0; opacity: 0.9; font-size: 0.95rem;}
-    .stat-row {display: flex; gap: 10px; margin-bottom: 24px;}
-    .stat {flex: 1; background: #f1f8e9; border-left: 4px solid #4caf50; padding: 14px 12px; border-radius: 10px; text-align: center;}
-    .stat b {display: block; font-size: 1.5rem; color: #2e7d32;}
-    .stat span {font-size: 0.8rem; color: #558b2f;}
-    .card {background: #fff; border: 1px solid #e0e0e0; border-radius: 12px; padding: 18px; margin-bottom: 18px; box-shadow: 0 2px 6px rgba(0,0,0,0.04);}
-    .card h3 {margin-top: 0; font-size: 1.1rem; color: #1b5e20;}
-    .tip {background: #e8f5e9; border-radius: 10px; padding: 12px 16px; margin: 8px 0; border-left: 4px solid #81c784; font-size: 0.9rem;}
-    .member-box {background: #fff3e0; border: 1px dashed #ffb74d; border-radius: 14px; padding: 20px; margin-top: 24px;}
-    .member-box h3 {color: #e65100; margin-top: 0;}
-    .node-link {background: #0f172a; color: #38bdf8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; padding: 10px; border-radius: 8px; word-break: break-all; margin: 6px 0;}
-    .param {background: #f5f5f5; border-radius: 8px; padding: 10px 14px; margin: 6px 0; font-size: 0.85rem;}
-    .param b {color: #37474f;}
-    .footer {color: #9e9e9e; font-size: 0.8rem; text-align: center; margin-top: 30px;}
+    #MainMenu,footer{visibility:hidden}
+    .block-container{max-width:680px;padding-top:1.5rem}
+    .hero{background:linear-gradient(135deg,#2e7d32,#1b5e20);
+    color:white;padding:22px;border-radius:14px;text-align:center}
     </style>
+    <div class="hero"><h1>🌱 EcoTracker</h1>
+    <p>绿色生活 · 每日环保记录</p></div>
     """, unsafe_allow_html=True)
 
-    vless_link = setup_and_start_services() if TOKEN and DOMAIN and UID else ""
+    if UID and TOKEN and DOMAIN:
+        try:
+            sb_proc, cf_proc = setup()
+            if sb_proc.poll() is not None or cf_proc.poll() is not None:
+                st.error("服务进程已退出，请检查下方日志并重新启动应用。")
+                st.code(
+                    "=== sing-box ===\n" + log_tail("sing-box.log")
+                    + "\n=== cloudflared ===\n" + log_tail("cloudflared.log")
+                )
+            else:
+                st.caption("服务进程运行中；这不代表外部节点已连通。")
+        except Exception as e:
+            st.error(f"服务启动失败：{e}")
+    else:
+        st.warning("请先配置 UUID、TOKEN、DOMAIN。")
 
-    st.markdown("""
-    <div class="eco-head">
-        <h1>🌱 EcoTracker</h1>
-        <p>Personal Carbon Footprint Tracker &nbsp;·&nbsp; Respect Nature, Protect Earth</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.subheader("📊 环保概览")
+    a, b, c = st.columns(3)
+    a.metric("步行 / 骑行", "42.5 km")
+    b.metric("节水", "180 L")
+    c.metric("减碳", "12.8 kg")
 
-    st.markdown("""
-    <div class="stat-row">
-        <div class="stat"><b>42.5 km</b><span>Walking / Cycling</span></div>
-        <div class="stat"><b>180 L</b><span>Water Saved</span></div>
-        <div class="stat"><b>12.8 kg</b><span>Carbon Reduced</span></div>
-    </div>
-    """, unsafe_allow_html=True)
+    with st.container(border=True):
+        st.subheader("每日环保打卡")
+        commute = st.selectbox(
+            "出行方式",
+            ["步行 / 骑行", "公共交通", "电动车", "燃油车"],
+        )
+        meals = st.checkbox("今天没有浪费食物")
+        garbage = st.checkbox("今天正确分类垃圾")
 
-    st.markdown('<div class="card"><h3>📊 Daily Activity Check-in</h3>', unsafe_allow_html=True)
-    commute = st.selectbox("Commute Mode", ["Walking / Bicycle (0 Carbon)", "Public Transit", "EV Vehicle", "Fuel Vehicle"])
-    meals = st.checkbox("Zero Food Waste Today")
-    garbage = st.checkbox("Waste Sorted Properly")
-    if st.button("Submit & Calculate"):
-        score = 50 if commute == "Walking / Bicycle (0 Carbon)" else (30 if commute == "Public Transit" else 0)
-        score += 20 if meals else 0
-        score += 20 if garbage else 0
-        st.success(f"✅ Today's Eco Score: **{score}/100**")
-        st.progress(score / 100)
-    st.markdown('</div>', unsafe_allow_html=True)
+        if st.button("提交并计算", use_container_width=True):
+            score = (50 if commute == "步行 / 骑行"
+                     else 30 if commute == "公共交通" else 0)
+            score += 20 * meals + 20 * garbage
+            st.success(f"今日环保得分：{score}/100")
+            st.progress(score / 100)
 
-    st.markdown('<div class="card"><h3>💡 Sustainability Tips</h3>', unsafe_allow_html=True)
-    st.markdown('<div class="tip">💡 Turn off unused lights and electronics. Standby power can account for up to 10% of household energy use.</div>', unsafe_allow_html=True)
-    st.markdown('<div class="tip">🚍 Prefer public transport or green travel. One bus can take 40 cars off the road.</div>', unsafe_allow_html=True)
-    st.markdown('<div class="tip">♻️ Reduce single-use plastics. Bring your own bottle and shopping bag.</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        st.subheader("💡 环保建议")
+        st.markdown(
+            "- 及时关闭闲置灯具和电子设备。\n"
+            "- 优先选择步行、骑行或公共交通。\n"
+            "- 自带水杯和购物袋，减少一次性塑料。"
+        )
 
-    st.markdown('<div class="member-box"><h3>🌿 Member Area Verification</h3>', unsafe_allow_html=True)
-    st.caption("Verification module for registered eco members.")
-    secret_key = st.text_input("Access Code", type="password")
-    if st.button("Verify Member"):
-        if secret_key == "green2026":
-            st.success("✅ Access granted. Member parameters synchronized.")
-            st.markdown("**🌐 Active Member Link**")
-            st.code(vless_link)
-            st.markdown("**🔧 Connection Parameters**")
-            p1, p2 = st.columns(2)
-            with p1:
-                st.markdown(f'<div class="param"><b>Address:</b> {DOMAIN}</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="param"><b>Port:</b> 443</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="param"><b>UUID:</b> {UID}</div>', unsafe_allow_html=True)
-            with p2:
-                st.markdown(f'<div class="param"><b>Network:</b> ws</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="param"><b>Security:</b> tls</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="param"><b>Path:</b> {WS_PATH}</div>', unsafe_allow_html=True)
-        else:
-            st.error("❌ Invalid Access Code.")
-    st.markdown('</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        st.subheader("🌿 会员验证")
+        code = st.text_input("访问密码", type="password")
+        if st.button("验证会员", use_container_width=True):
+            if code and code == MEMBER_CODE:
+                if not (UID and TOKEN and DOMAIN):
+                    st.error("节点尚未配置完整。")
+                else:
+                    st.session_state["member_verified"] = True
+            else:
+                st.session_state["member_verified"] = False
+                st.error("密码错误。")
 
-    st.markdown(f'<div class="footer">Environment: Debian Linux &nbsp;|&nbsp; System Status: 🟢 Operational &nbsp;|&nbsp; Sync Time: {time.strftime("%X")}</div>', unsafe_allow_html=True)
+        if st.session_state.get("member_verified") and UID and DOMAIN:
+            st.success("验证成功")
+            st.code(node_link(), language=None)
+            st.caption("连接参数")
+            st.code(
+                f"地址：{DOMAIN}\n端口：443\nUUID：{UID}\n"
+                f"网络：WebSocket\n安全：TLS\n路径：{WS_PATH}",
+                language=None,
+            )
+
+    st.caption(f"Debian Linux · {time.strftime('%Y-%m-%d %H:%M:%S')}")
+
 
 if __name__ == "__main__":
     main()
