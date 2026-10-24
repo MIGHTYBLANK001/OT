@@ -1,0 +1,192 @@
+name: Refresh VLESS subscription
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-vless
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch source and preserve yx response
+        shell: bash
+        env:
+          SUBSCRIPTION_URL: https://honghong.yyylll.kdns.fr/sub/user/eyJ1IjoidGVzdGFhYTEyMyIsImUiOi0zMDI0MzUxMTI0MzA4ODkwLCJzIjoiMmI0YjRmZDVhZGRjYjg4OSJ9?vip=1&protocol=default
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 - <<'PYTHON' > /dev/null
+          """Restore VLESS server addresses from explicit SNI parameters."""
+          
+          import base64
+          from collections import Counter
+          import ipaddress
+          import os
+          from pathlib import Path
+          import re
+          import sys
+          from urllib.parse import parse_qsl, unquote, urlsplit
+          from urllib.request import Request, urlopen
+          
+          MAX_BYTES = 10 * 1024 * 1024
+          
+          
+          def decode_subscription(text):
+              text = text.strip().lstrip('\ufeff')
+              if text.startswith(('vless://', 'vmess://', 'trojan://', 'ss://', '#')):
+                  return text
+              compact = ''.join(text.split())
+              try:
+                  return base64.b64decode(
+                      compact + '=' * (-len(compact) % 4), altchars=b'-_', validate=True
+                  ).decode('utf-8-sig')
+              except (ValueError, UnicodeError) as exc:
+                  raise ValueError('Expected URI lines or a Base64-encoded URI subscription') from exc
+          
+          
+          def valid_host(value):
+              if not value or value != value.strip():
+                  return False
+              try:
+                  ipaddress.ip_address(value)
+                  return True
+              except ValueError:
+                  pass
+              try:
+                  host = value.encode('idna').decode('ascii').rstrip('.')
+              except UnicodeError:
+                  return False
+              return len(host) <= 253 and all(
+                  re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label)
+                  for label in host.split('.')
+              )
+          
+          
+          def restore_uri(uri):
+              parsed = urlsplit(uri)
+              if parsed.scheme != 'vless' or not parsed.username or not parsed.hostname:
+                  raise ValueError('Invalid VLESS URI')
+              port = parsed.port
+              if port is None or port == 0:
+                  raise ValueError('Missing or invalid port')
+              values = [v for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+                        if k.lower() == 'sni']
+              if not values or not any(values):
+                  return uri, False
+              if len(set(values)) != 1 or not valid_host(values[0]):
+                  raise ValueError('Invalid or conflicting SNI')
+              host = values[0]
+              if ':' in host:
+                  host = '[' + host + ']'
+              else:
+                  host = host.encode('idna').decode('ascii')
+              # Replace only the authority; preserve query encoding, path and fragment.
+              authority_start = uri.index('://') + 3
+              authority_end = authority_start + len(parsed.netloc)
+              userinfo = parsed.netloc.rsplit('@', 1)[0]
+              authority = f'{userinfo}@{host}:{port}'
+              return uri[:authority_start] + authority + uri[authority_end:], True
+          
+          
+          def convert(text):
+              result = []
+              restored = missing = skipped = 0
+              for line in decode_subscription(text).splitlines():
+                  line = line.strip()
+                  if not line or line.startswith('#'):
+                      continue
+                  if not line.startswith('vless://'):
+                      skipped += 1
+                      continue
+                  uri, changed = restore_uri(line)
+                  result.append(uri)
+                  restored += int(changed)
+                  missing += int(not changed)
+              if not result:
+                  raise ValueError('No VLESS nodes found; YAML/JSON subscriptions are not supported')
+              return '\n'.join(result) + '\n', restored, missing, skipped
+          
+          
+          def select_most_common_uuid(content):
+              """Keep the first node for the most frequent UUID; ties use input order."""
+              lines = [line for line in content.splitlines() if line.strip()]
+              if not lines:
+                  raise ValueError('No VLESS nodes to select')
+              uuids = [unquote(urlsplit(line).username or '').lower() for line in lines]
+              if not all(uuids):
+                  raise ValueError('Missing VLESS UUID')
+              counts = Counter(uuids)
+              winner = max(counts, key=counts.get)
+              return lines[uuids.index(winner)] + '\n'
+          
+          
+          def build_subscription_url(selected):
+              """Remove the node name and concatenate the URI without outer encoding."""
+              node = selected.strip().split('#', 1)[0]
+              parsed = urlsplit(node)
+              if parsed.scheme != 'vless' or not parsed.username or not parsed.hostname:
+                  raise ValueError('Invalid selected VLESS node')
+              return 'https://yx.dpdns.dpdns.org/sub?link=' + node + '\n'
+          
+          
+          def fetch_subscription(url, *, raw=False):
+              """Fetch a bounded HTTPS subscription without logging its credentials."""
+              if urlsplit(url).scheme != 'https':
+                  raise ValueError('Expected HTTPS subscription URL')
+              request = Request(url, headers={'User-Agent': 'v2rayN', 'Accept': 'text/plain'})
+              with urlopen(request, timeout=60) as response:
+                  if urlsplit(response.geturl()).scheme != 'https':
+                      raise ValueError('Subscription redirected to a non-HTTPS URL')
+                  data = response.read(MAX_BYTES + 1)
+              if len(data) > MAX_BYTES:
+                  raise ValueError('Subscription exceeds size limit')
+              return data if raw else data.decode('utf-8-sig')
+          
+          
+          
+          
+          def main():
+              url = os.environ.get('SUBSCRIPTION_URL', '')
+              if urlsplit(url).scheme != 'https':
+                  raise ValueError('Set SUBSCRIPTION_URL to an HTTPS subscription URL')
+              content, restored, missing, skipped = convert(fetch_subscription(url))
+              output = Path('output')
+              output.mkdir(exist_ok=True)
+              selected = select_most_common_uuid(content)
+              subscription_url = build_subscription_url(selected)
+              # Preserve the second response byte-for-byte, including encoding and names.
+              new_subscription = fetch_subscription(subscription_url.strip(), raw=True)
+              (output / 'vless.txt').write_bytes(new_subscription)
+              # Remove only obsolete output files produced by earlier script versions.
+              for name in ('subscription.txt', 'subscription.base64.txt'):
+                  (output / name).unlink(missing_ok=True)
+              sys.stdout.buffer.write(new_subscription)
+          
+          
+          if __name__ == '__main__':
+              try:
+                  main()
+              except Exception:
+                  # Network exceptions may contain the secret URL. Never print them.
+                  print('Conversion failed. Check secret, network, subscription format and SNI values.', file=sys.stderr)
+                  sys.exit(1)
+          PYTHON
+      - name: Upload subscription
+        uses: actions/upload-artifact@v4
+        with:
+          name: restored-vless-subscription
+          path: output/vless.txt
+          if-no-files-found: error
+          retention-days: 1
