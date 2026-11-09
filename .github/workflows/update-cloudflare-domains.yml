@@ -1,0 +1,63 @@
+name: Update Cloudflare Preferred Domains
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
+      timezone: "Asia/Shanghai"
+
+permissions:
+  contents: write
+
+jobs:
+  update-cloudflare-domains:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch and merge preferred domains
+        run: |
+          # 创建临时工作目录并清空目标 IP 文件
+          mkdir -p ./tmp/
+          > IP
+
+          # 1. 获取 090227.xyz 的 Cloudflare 优选域名
+          curl -fsSL https://cf.090227.xyz/#/domains | sed -n '/copyBtn/s/.*data-copy="\([^"]*\)".*/\1/p' > ./tmp/01-090227-domain.txt || true
+
+          # 2. 获取 VPS789 的 Cloudflare 优选域名并排除 IPv4 地址
+          curl -fsSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -vP '^\d+\.\d+\.\d+\.\d+$' > ./tmp/02-vps789-domain.txt || true
+
+          # 3. 获取 030101.xyz 的 Cloudflare 优选域名
+          curl -fsSL https://ipdb.030101.xyz/bestdomain | sed -n '/优选官方IP域名/,/<\/blockquote>/s/.*<span class="highlight">\([^<]*\)<\/span>.*/\1/p' > ./tmp/03-030101-domain.txt || true
+
+          # 4. 获取 wetest.vip 的 Cloudflare 优选域名，并转换通配符域名
+          curl -fsSL https://www.wetest.vip/page/cloudflare/cname.html | grep -oP '(?<=<td data-label="地址名称">)[^<]+' | sed 's/^\*/bestcf/' > ./tmp/04-wetest-domain.txt || true
+
+          # 数据清洗、去重，并将每个分类的前 5 条追加到 IP 文件
+          for type_file in ./tmp/*.txt; do
+            if [ -f "$type_file" ]; then
+              sed 's/[[:space:]]//g' "$type_file" | grep -v '^$' | awk '!a[$0]++' | head -n 5 >> IP || true
+            fi
+          done
+
+          # 对合并后的总数据再次去重，保留首次出现的顺序
+          awk '!a[$0]++' IP > IP.tmp
+          mv IP.tmp IP
+
+          # 清理临时文件
+          rm -rf ./tmp/
+
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          if [ -n "$(git status --porcelain IP)" ]; then
+            git add IP
+            git commit -m "Update Cloudflare preferred domains ($(date +'%Y-%m-%d'))"
+            git push
+          else
+            echo "域名列表没有变化，无需提交。"
+          fi
