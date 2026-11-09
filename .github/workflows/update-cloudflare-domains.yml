@@ -3,7 +3,7 @@ name: Update Cloudflare Preferred Domains
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 3 * * *'
+    - cron: '0 2 * * *'
       timezone: "Asia/Shanghai"
 
 permissions:
@@ -35,10 +35,15 @@ jobs:
           # 4. 获取 wetest.vip 的 Cloudflare 优选域名，并转换通配符域名
           curl -fsSL https://www.wetest.vip/page/cloudflare/cname.html | grep -oP '(?<=<td data-label="地址名称">)[^<]+' | sed 's/^\*/bestcf/' > ./tmp/04-wetest-domain.txt || true
 
-          # 数据清洗、去重，并将每个分类的前 5 条追加到 IP 文件
+          # 数据清洗、去重，将每个分类的前 5 条格式化为 域名#域名 后追加到 IP 文件
           for type_file in ./tmp/*.txt; do
             if [ -f "$type_file" ]; then
-              sed 's/[[:space:]]//g' "$type_file" | grep -v '^$' | awk '!a[$0]++' | head -n 5 >> IP || true
+              sed 's/[[:space:]]//g' "$type_file" \
+                | grep -v '^$' \
+                | awk '!a[$0]++' \
+                | head -n 5 \
+                | awk '{print $0 "#" $0}' \
+                >> IP || true
             fi
           done
 
