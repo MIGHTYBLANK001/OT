@@ -1,4 +1,3 @@
-```yaml
 name: Update Cloudflare Preferred Domains
 
 on:
@@ -68,4 +67,3 @@ jobs:
           else
             echo "IP 文件没有变化"
           fi
-```
