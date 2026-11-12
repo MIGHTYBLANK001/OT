@@ -1,63 +1,71 @@
+```yaml
 name: Update Cloudflare Preferred Domains
 
 on:
   workflow_dispatch:
   schedule:
     - cron: "15 */8 * * *"
-      timezone: "Asia/Shanghai"
 
 permissions:
   contents: write
 
 jobs:
-  update-cloudflare-domains:
+  update:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Fetch and merge preferred domains
+      - name: Fetch and merge
         run: |
-          # 创建临时工作目录并清空目标 IP 文件
-          mkdir -p ./tmp/
-          > IP
-          curl -fsSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -vP '^\d+\.\d+\.\d+\.\d+$' > ./tmp/02-vps789-domain.txt || true
-          curl -fsSL https://www.wetest.vip/page/cloudflare/cname.html | grep -oP '(?<=<td data-label="地址名称">)[^<]+' | sed 's/^\*/bestcf/' > ./tmp/04-wetest-domain.txt || true
-          
-          curl -fsSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CM[].ip' | awk '{print $0 "#CMCC-IPv4_VPS789_" NR}' >> ./tmp/cmcc-ip.txt || true
-          curl -fsSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CU[].ip' | awk '{print $0 "#CUCC-IPv4_VPS789_" NR}' >> ./tmp/cucc-ip.txt || true
-          curl -fsSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CT[].ip' | awk '{print $0 "#CTCC-IPv4_VPS789_" NR}' >> ./tmp/ctcc-ip.txt || true
-          curl -fsSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -P '\d+\.\d+\.\d+\.\d+' | head -n 5 | awk '{print $0 "#CF-IPv4_VPS789_" NR}' > ./tmp/bestcf-ip.txt || true
+          mkdir -p tmp
+          : > IP
 
+          # 域名
+          curl -fsSL https://vps789.com/openApi/cfIpTop20 \
+            | jq -r '.data.good[].ip' \
+            | grep -vP '^\d+\.\d+\.\d+\.\d+$' > tmp/02-vps789-domain.txt || true
 
-          for type_file in ./tmp/*.txt; do
-            if [ -f "$type_file" ]; then
-              sed 's/[[:space:]]//g' "$type_file" \
-                | grep -v '^$' \
-                | awk '!a[$0]++' \
-                | head -n 3 \
-                | awk '{print $0 "#" $0}' \
-                >> IP || true
-            fi
+          curl -fsSL https://www.wetest.vip/page/cloudflare/cname.html \
+            | grep -oP '(?<=<td data-label="地址名称">)[^<]+' \
+            | sed 's/^\*/bestcf/' > tmp/04-wetest-domain.txt || true
+
+          # 运营商 IP
+          curl -fsSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CM[].ip' > tmp/cmcc-ip.txt || true
+          curl -fsSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CU[].ip' > tmp/cucc-ip.txt || true
+          curl -fsSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CT[].ip' > tmp/ctcc-ip.txt || true
+
+          # 最佳 IP
+          curl -fsSL https://vps789.com/openApi/cfIpTop20 \
+            | jq -r '.data.good[].ip' \
+            | grep -P '^\d+\.\d+\.\d+\.\d+$' \
+            | head -n 5 > tmp/bestcf-ip.txt || true
+
+          # 统一格式：地址#地址
+          for f in tmp/*.txt; do
+            [ -f "$f" ] || continue
+            sed 's/[[:space:]]//g' "$f" \
+              | grep -v '^$' \
+              | awk -F'#' '{print $1 "#" $1}' \
+              | awk '!a[$0]++' \
+              | head -n 3 >> IP
           done
 
-          # 对合并后的总数据再次去重，保留首次出现的顺序
+          # 全局去重
           awk '!a[$0]++' IP > IP.tmp
           mv IP.tmp IP
+          rm -rf tmp
 
-          # 清理临时文件
-          rm -rf ./tmp/
-
-      - name: Commit and push changes
+      - name: Commit and push
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
 
-          if [ -n "$(git status --porcelain IP)" ]; then
+          if ! git diff --quiet -- IP; then
             git add IP
             git commit -m "Update Cloudflare preferred domains ($(date +'%Y-%m-%d'))"
             git push
           else
-            echo "域名列表没有变化，无需提交。"
+            echo "IP 文件没有变化"
           fi
+```
