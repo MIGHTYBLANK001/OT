@@ -22,26 +22,23 @@ jobs:
           # 创建临时工作目录并清空目标 IP 文件
           mkdir -p ./tmp/
           > IP
-
-          # 1. 获取 090227.xyz 的 Cloudflare 优选域名
-          curl -fsSL https://cf.090227.xyz/#/domains | sed -n '/copyBtn/s/.*data-copy="\([^"]*\)".*/\1/p' > ./tmp/01-090227-domain.txt || true
-
-          # 2. 获取 VPS789 的 Cloudflare 优选域名并排除 IPv4 地址
           curl -fsSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -vP '^\d+\.\d+\.\d+\.\d+$' > ./tmp/02-vps789-domain.txt || true
-
-          # 3. 获取 030101.xyz 的 Cloudflare 优选域名
-          curl -fsSL https://ipdb.030101.xyz/bestdomain | sed -n '/优选官方IP域名/,/<\/blockquote>/s/.*<span class="highlight">\([^<]*\)<\/span>.*/\1/p' > ./tmp/03-030101-domain.txt || true
-
-          # 4. 获取 wetest.vip 的 Cloudflare 优选域名，并转换通配符域名
           curl -fsSL https://www.wetest.vip/page/cloudflare/cname.html | grep -oP '(?<=<td data-label="地址名称">)[^<]+' | sed 's/^\*/bestcf/' > ./tmp/04-wetest-domain.txt || true
+          curl -fsSL https://cf.090227.xyz/#/domains | sed -n '/copyBtn/s/.*data-copy="\([^"]*\)".*/\1/p' > ./tmp/01-090227-domain.txt || true
+          curl -fsSL https://ipdb.030101.xyz/bestdomain | sed -n '/优选官方IP域名/,/<\/blockquote>/s/.*<span class="highlight">\([^<]*\)<\/span>.*/\1/p' > ./tmp/03-030101-domain.txt || true
+          
+          curl -fsSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CM[].ip' | awk '{print $0 "#CMCC-IPv4_VPS789_" NR}' >> ./bestcf/cmcc-ip.txtt || true
+          curl -fsSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CU[].ip' | awk '{print $0 "#CUCC-IPv4_VPS789_" NR}' >> ./bestcf/cucc-ip.txt || true
+          curl -fsSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CT[].ip' | awk '{print $0 "#CTCC-IPv4_VPS789_" NR}' >> ./bestcf/ctcc-ip.txt || true
+          curl -fsSL https://vps789.com/openApi/cfIpTop20 | jq -r '.data.good[].ip' | grep -P '\d+\.\d+\.\d+\.\d+' | head -n 5 | awk '{print $0 "#CF-IPv4_VPS789_" NR}' > ./bestcf/bestcf-ip.txt || true
 
-          # 数据清洗、去重，将每个分类的前 5 条格式化为 域名#域名 后追加到 IP 文件
+
           for type_file in ./tmp/*.txt; do
             if [ -f "$type_file" ]; then
               sed 's/[[:space:]]//g' "$type_file" \
                 | grep -v '^$' \
                 | awk '!a[$0]++' \
-                | head -n 5 \
+                | head -n 3 \
                 | awk '{print $0 "#" $0}' \
                 >> IP || true
             fi
