@@ -25,10 +25,6 @@ jobs:
             | jq -r '.data.good[].ip' \
             | grep -vP '^\d+\.\d+\.\d+\.\d+$' > tmp/02-vps789-domain.txt || true
 
-          curl -fsSL https://www.wetest.vip/page/cloudflare/cname.html \
-            | grep -oP '(?<=<td data-label="地址名称">)[^<]+' \
-            | sed 's/^\*/bestcf/' > tmp/04-wetest-domain.txt || true
-
           # 运营商 IP
           curl -fsSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CM[].ip' > tmp/cmcc-ip.txt || true
           curl -fsSL https://vps789.com/openApi/cfIpApi | jq -r '.data.CU[].ip' > tmp/cucc-ip.txt || true
